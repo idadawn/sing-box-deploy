@@ -508,6 +508,12 @@ generate_config() {
         }
       ],
       route: {
+        rules: [
+          {
+            inbound: "hy2-in",
+            outbound: "direct-out"
+          }
+        ],
         final: "egress-auto",
         auto_detect_interface: true,
         default_domain_resolver: "dns-local"
