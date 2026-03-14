@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>US-ISP 一键订阅</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --card: #121931;
+      --muted: #9fb0d0;
+      --text: #eef4ff;
+      --line: #223055;
+      --accent: #6ea8fe;
+      --accent-2: #7ef0c2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: radial-gradient(circle at top, #162243 0%, var(--bg) 45%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 36px 20px 52px;
+    }
+    .hero {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--accent-2);
+      background: rgba(126, 240, 194, 0.08);
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 34px;
+      line-height: 1.15;
+    }
+    .sub {
+      margin: 0 auto;
+      max-width: 760px;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+      margin-top: 30px;
+    }
+    .card {
+      background: rgba(18, 25, 49, 0.94);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 22px;
+    }
+    .card p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 14px;
+      min-height: 92px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      color: var(--text);
+      text-decoration: none;
+      background: #182246;
+      cursor: pointer;
+      transition: transform .15s ease, background .15s ease, border-color .15s ease;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .btn:hover { transform: translateY(-1px); border-color: var(--accent); }
+    .btn.primary { background: linear-gradient(135deg, #3a6df0, #578bff); border-color: #578bff; }
+    .btn.secondary { background: linear-gradient(135deg, #157a64, #1f9d80); border-color: #1f9d80; }
+    .btn.ghost { background: transparent; }
+    .block {
+      margin-top: 24px;
+      background: rgba(18, 25, 49, 0.94);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+    }
+    .block h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    .mono {
+      display: block;
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #0d1430;
+      color: #dce9ff;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .tips {
+      color: var(--muted);
+      line-height: 1.75;
+      font-size: 14px;
+    }
+    .footer {
+      margin-top: 28px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div class="badge">US-ISP 订阅入口</div>
+      <h1>一键订阅</h1>
+      <p class="sub">
+        当前仅保留两套协议与两条订阅入口：<strong>v2rayN / v2rayNG 使用 <span id="v2UrlHead"></span></strong>，
+        <strong>Clash Verge / Mihomo / Clash 系客户端使用 <span id="cUrlHead"></span></strong>。
+        页面统一备注名展示为 <strong>US-ISP</strong>。
+      </p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>v2rayN / v2rayNG</h2>
+        <p>
+          使用专用订阅地址 <strong><span class="v2UrlInline"></span></strong>。
+          Android 端可尝试直接唤起 v2rayNG；Windows 端更稳的方式仍然是复制订阅链接后，在 v2rayN 中添加订阅。
+        </p>
+        <div class="actions">
+          <a id="v2rayngLink" class="btn primary" href="#">在 v2rayNG 中打开</a>
+          <button class="btn ghost" data-copy="v2">复制 v2 订阅</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Clash Verge / Mihomo</h2>
+        <p>
+          使用专用订阅地址 <strong><span class="cUrlInline"></span></strong>。
+          适用于 Clash Verge Rev、Mihomo Party 及多数 Clash 系客户端。
+        </p>
+        <div class="actions">
+          <a id="clashLink" class="btn secondary" href="#">打开 Clash 导入</a>
+          <button class="btn ghost" data-copy="c">复制 Clash 订阅</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="block">
+      <h3>订阅地址</h3>
+      <div class="mono">US-ISP / v2rayN：<span id="v2Url"></span></div>
+      <div class="mono">US-ISP / Clash：<span id="cUrl"></span></div>
+      <div class="actions">
+        <button class="btn primary" data-copy="v2">复制 v2 订阅</button>
+        <button class="btn secondary" data-copy="c">复制 Clash 订阅</button>
+      </div>
+    </div>
+
+    <div class="block">
+      <h3>导入说明</h3>
+      <div class="tips">
+        <p><strong>v2rayN：</strong> 复制 <code class="v2UrlInline"></code>，在客户端中选择"订阅 → 添加订阅"，备注建议填写 <strong>US-ISP</strong>。</p>
+        <p><strong>v2rayNG：</strong> 可直接点击上方按钮尝试唤起；若没有自动导入，复制 <code class="v2UrlInline"></code> 到客户端中导入。</p>
+        <p><strong>Clash Verge / Mihomo：</strong> 复制 <code class="cUrlInline"></code>，或直接点击"打开 Clash 导入"。</p>
+      </div>
+    </div>
+
+    <div class="footer">Powered by Cloudflare Pages · US-ISP</div>
+  </div>
+
+  <script>
+    const base = `${window.location.protocol}//${window.location.host}`;
+    const v2Url = `${base}/v2`;
+    const cUrl = `${base}/c`;
+
+    document.getElementById('v2UrlHead').textContent = v2Url;
+    document.getElementById('cUrlHead').textContent = cUrl;
+    document.getElementById('v2Url').textContent = v2Url;
+    document.getElementById('cUrl').textContent = cUrl;
+
+    document.querySelectorAll('.v2UrlInline').forEach(el => { el.textContent = v2Url; });
+    document.querySelectorAll('.cUrlInline').forEach(el => { el.textContent = cUrl; });
+
+    document.getElementById('v2rayngLink').href = `v2rayng://install-config/?url=${encodeURIComponent(v2Url)}`;
+    document.getElementById('clashLink').href = `clash://install-config?url=${encodeURIComponent(cUrl)}`;
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('已复制：US-ISP');
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        alert('已复制：US-ISP');
+      }
+    }
+
+    document.querySelectorAll('[data-copy="v2"]').forEach(btn => {
+      btn.addEventListener('click', () => copyText(v2Url));
+    });
+
+    document.querySelectorAll('[data-copy="c"]').forEach(btn => {
+      btn.addEventListener('click', () => copyText(cUrl));
+    });
+  </script>
+</body>
+</html>

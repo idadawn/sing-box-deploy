@@ -1,0 +1,34 @@
+# ── 敏感配置（绝不提交）──────────────────────────────────
+.env
+
+# ── Cloudflare Pages 生成文件（由 install.sh 动态生成）────
+cloudflare-pages-sub/functions/v2.js
+cloudflare-pages-sub/functions/c.js
+cloudflare-pages-sub/_redirects
+
+# ── 运行时产物 ───────────────────────────────────────────
+client-info.txt
+deploy-summary.txt
+nodes.yaml
+cloudflare-pages-sub/nodes.yaml
+
+# ── 日志 & 临时文件 ──────────────────────────────────────
+*.log
+*.tmp
+
+# ── 备份目录 ─────────────────────────────────────────────
+backup-*/
+
+# ── Wrangler 缓存 ────────────────────────────────────────
+cloudflare-pages-sub/.wrangler/
+node_modules/
+
+# ── 编辑器 & 系统 ────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Claude Code 本地配置 ─────────────────────────────────
+.claude/

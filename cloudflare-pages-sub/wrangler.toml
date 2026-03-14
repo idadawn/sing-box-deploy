@@ -1,0 +1,12 @@
+name = "sub-converter"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = "."
+
+# Cloudflare Pages 配置
+[env.production]
+# 生产环境配置
+
+# 自定义域名（部署后在 Cloudflare Dashboard > Pages > Custom domains 中配置）
+# routes = [
+#   { pattern = "sub.yourdomain.com", custom_domain = true }
+# ]

@@ -1,0 +1,21 @@
+{
+  "name": "sub-converter",
+  "version": "1.0.0",
+  "description": "Cloudflare Pages subscription hosting for v2rayN and Clash",
+  "main": "index.js",
+  "scripts": {
+    "dev": "wrangler pages dev .",
+    "deploy": "wrangler pages deploy ."
+  },
+  "keywords": [
+    "v2ray",
+    "clash",
+    "subscription",
+    "cloudflare-pages"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

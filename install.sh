@@ -1,0 +1,1324 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+# =========================================================
+# sing-box 自动化部署脚本（Debian / Ubuntu）
+# - Trojan + Hysteria2
+# - 主出口：1024proxy SOCKS5（IP2）
+# - 备出口：服务器直出（IP1）
+# - Cloudflare DNS-01 自动签发证书
+# - 配置校验 / 失败回滚 / 增量 UFW
+# =========================================================
+
+# -----------------------------
+# 基础变量
+# -----------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/.env"
+CONFIG_DIR="/etc/sing-box"
+CONFIG_PATH="${CONFIG_DIR}/config.json"
+CERT_DIR="/var/lib/sing-box/certmagic"
+SOURCES_FILE="/etc/apt/sources.list.d/sagernet.sources"
+KEYRING_FILE="/etc/apt/keyrings/sagernet.asc"
+
+FORCE_REINSTALL=0
+SKIP_FIREWALL=0
+NO_START=0
+
+TMP_CONFIG=""
+BACKUP_CONFIG=""
+
+# -----------------------------
+# 颜色
+# -----------------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# -----------------------------
+# 日志
+# -----------------------------
+log_info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
+log_error()   { echo -e "${RED}[ERR]${NC} $*" >&2; }
+
+# -----------------------------
+# 清理
+# -----------------------------
+cleanup() {
+  if [[ -n "${TMP_CONFIG}" && -f "${TMP_CONFIG}" ]]; then
+    rm -f "${TMP_CONFIG}"
+  fi
+}
+trap cleanup EXIT
+
+on_error() {
+  local line="${1:-unknown}"
+  log_error "脚本执行失败，出错行号: ${line}"
+}
+trap 'on_error $LINENO' ERR
+
+# -----------------------------
+# 帮助
+# -----------------------------
+usage() {
+  cat <<'EOF'
+用法:
+  bash install-singbox.sh [选项]
+
+选项:
+  --env <path>         指定 .env 文件路径
+  --force-reinstall    强制重装 sing-box
+  --skip-firewall      跳过 UFW 配置
+  --no-start           仅部署配置，不启动/重启 sing-box
+  -h, --help           显示帮助
+
+示例:
+  bash install-singbox.sh
+  bash install-singbox.sh --env /root/sb/.env
+  bash install-singbox.sh --force-reinstall
+EOF
+}
+
+# -----------------------------
+# 参数解析
+# -----------------------------
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --env)
+        [[ $# -ge 2 ]] || { log_error "--env 需要一个路径参数"; exit 1; }
+        ENV_FILE="$2"
+        shift 2
+        ;;
+      --force-reinstall)
+        FORCE_REINSTALL=1
+        shift
+        ;;
+      --skip-firewall)
+        SKIP_FIREWALL=1
+        shift
+        ;;
+      --no-start)
+        NO_START=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        log_error "未知参数: $1"
+        usage
+        exit 1
+        ;;
+    esac
+  done
+}
+
+# -----------------------------
+# 工具函数
+# -----------------------------
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+is_true() {
+  local v="${1:-}"
+  case "${v,,}" in
+    1|true|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    log_error "请使用 root 运行此脚本"
+    exit 1
+  fi
+}
+
+require_supported_os() {
+  if [[ ! -f /etc/os-release ]]; then
+    log_error "无法识别系统类型：缺少 /etc/os-release"
+    exit 1
+  fi
+
+  # shellcheck disable=SC1091
+  source /etc/os-release
+
+  case "${ID:-}" in
+    debian|ubuntu)
+      log_success "系统检查通过: ${PRETTY_NAME:-$ID}"
+      ;;
+    *)
+      log_error "当前仅支持 Debian / Ubuntu，检测到: ${PRETTY_NAME:-$ID}"
+      exit 1
+      ;;
+  esac
+}
+
+# -----------------------------
+# 安全读取 .env
+# - 不使用 source
+# - 支持：
+#   KEY=value
+#   KEY="value"
+#   KEY='value'
+# - 不支持行尾内联注释
+# -----------------------------
+load_env() {
+  [[ -f "${ENV_FILE}" ]] || {
+    log_error "未找到 .env 文件: ${ENV_FILE}"
+    exit 1
+  }
+
+  log_info "读取配置文件: ${ENV_FILE}"
+
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    local line
+    line="$(trim "${raw_line}")"
+
+    [[ -z "${line}" ]] && continue
+    [[ "${line:0:1}" == "#" ]] && continue
+
+    if [[ ! "${line}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      log_error ".env 存在非法行：${raw_line}"
+      log_error "请使用 KEY=value 格式，且不要写行尾注释"
+      exit 1
+    fi
+
+    local key="${line%%=*}"
+    local value="${line#*=}"
+
+    key="$(trim "${key}")"
+    value="$(trim "${value}")"
+
+    # 去掉包裹引号
+    # 去掉包裹引号（避免复杂转义导致语法错误）
+	if [[ ${#value} -ge 2 && "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+	  value="${value:1:-1}"
+	  value="${value//\\n/$'\n'}"
+	  value="${value//\\\\/\\}"
+	elif [[ ${#value} -ge 2 && "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+	  value="${value:1:-1}"
+	fi
+
+    printf -v "${key}" '%s' "${value}"
+    export "${key}"
+  done < "${ENV_FILE}"
+
+  # 默认值
+  TROJAN_PORT="${TROJAN_PORT:-443}"
+  HYSTERIA_PORT="${HYSTERIA_PORT:-8443}"
+  HYSTERIA_UP_MBPS="${HYSTERIA_UP_MBPS:-50}"
+  HYSTERIA_DOWN_MBPS="${HYSTERIA_DOWN_MBPS:-100}"
+  URLTEST_URL="${URLTEST_URL:-https://www.gstatic.com/generate_204}"
+  URLTEST_INTERVAL="${URLTEST_INTERVAL:-3m}"
+  URLTEST_TOLERANCE="${URLTEST_TOLERANCE:-50}"
+  LOG_LEVEL="${LOG_LEVEL:-info}"
+  SSH_PORT="${SSH_PORT:-22}"
+  ENABLE_UFW="${ENABLE_UFW:-true}"
+
+  log_success ".env 已加载"
+}
+
+validate_port() {
+  local name="$1"
+  local value="$2"
+  [[ "${value}" =~ ^[0-9]+$ ]] || { log_error "${name} 必须是数字"; exit 1; }
+  (( value >= 1 && value <= 65535 )) || { log_error "${name} 必须在 1-65535 范围内"; exit 1; }
+}
+
+validate_positive_int() {
+  local name="$1"
+  local value="$2"
+  [[ "${value}" =~ ^[0-9]+$ ]] || { log_error "${name} 必须是非负整数"; exit 1; }
+}
+
+validate_domain_like() {
+  local name="$1"
+  local value="$2"
+  [[ -n "${value}" ]] || { log_error "${name} 不能为空"; exit 1; }
+  [[ "${value}" != *" "* ]] || { log_error "${name} 不能包含空格"; exit 1; }
+  [[ "${value}" == *.* ]] || { log_error "${name} 格式看起来不像域名"; exit 1; }
+}
+
+validate_config() {
+  log_info "校验配置..."
+
+  local required_vars=(
+    TROJAN_DOMAIN
+    HYSTERIA_DOMAIN
+    CF_DNS_EDIT_TOKEN
+    ACME_EMAIL
+    PROXY_HOST
+    PROXY_PORT
+    PROXY_USER
+    PROXY_PASS
+    TROJAN_PASSWORD
+    HYSTERIA_PASSWORD
+    HYSTERIA_OBFS_PASSWORD
+  )
+
+  local missing=()
+  local var
+  for var in "${required_vars[@]}"; do
+    if [[ -z "${!var:-}" ]]; then
+      missing+=("${var}")
+    fi
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    log_error "以下配置项未设置："
+    printf '  - %s\n' "${missing[@]}" >&2
+    exit 1
+  fi
+
+  validate_domain_like "TROJAN_DOMAIN" "${TROJAN_DOMAIN}"
+  validate_domain_like "HYSTERIA_DOMAIN" "${HYSTERIA_DOMAIN}"
+
+  if [[ "${TROJAN_DOMAIN}" == "${HYSTERIA_DOMAIN}" ]]; then
+    log_error "TROJAN_DOMAIN 和 HYSTERIA_DOMAIN 不应相同"
+    exit 1
+  fi
+
+  validate_port "TROJAN_PORT" "${TROJAN_PORT}"
+  validate_port "HYSTERIA_PORT" "${HYSTERIA_PORT}"
+  validate_port "PROXY_PORT" "${PROXY_PORT}"
+  validate_port "SSH_PORT" "${SSH_PORT}"
+
+  validate_positive_int "HYSTERIA_UP_MBPS" "${HYSTERIA_UP_MBPS}"
+  validate_positive_int "HYSTERIA_DOWN_MBPS" "${HYSTERIA_DOWN_MBPS}"
+  validate_positive_int "URLTEST_TOLERANCE" "${URLTEST_TOLERANCE}"
+
+  [[ "${LOG_LEVEL}" =~ ^(trace|debug|info|warn|error|fatal|panic)$ ]] || {
+    log_error "LOG_LEVEL 非法，允许值: trace|debug|info|warn|error|fatal|panic"
+    exit 1
+  }
+
+  log_success "配置校验通过"
+}
+
+install_dependencies() {
+  log_info "安装基础依赖..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y curl jq ca-certificates gnupg ufw
+  log_success "基础依赖安装完成"
+}
+
+install_singbox() {
+  log_info "配置 sing-box 官方 APT 源..."
+
+  mkdir -p /etc/apt/keyrings
+  curl -fsSL https://sing-box.app/gpg.key -o "${KEYRING_FILE}"
+  chmod a+r "${KEYRING_FILE}"
+
+  cat > "${SOURCES_FILE}" <<EOF
+Types: deb
+URIs: https://deb.sagernet.org/
+Suites: *
+Components: *
+Enabled: yes
+Signed-By: ${KEYRING_FILE}
+EOF
+
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+
+  if command -v sing-box >/dev/null 2>&1; then
+    if (( FORCE_REINSTALL == 1 )); then
+      log_info "强制重装 sing-box..."
+      apt-get install --reinstall -y sing-box
+    else
+      log_info "升级/安装 sing-box..."
+      apt-get install -y sing-box
+    fi
+  else
+    log_info "安装 sing-box..."
+    apt-get install -y sing-box
+  fi
+
+  log_success "sing-box 安装完成"
+  sing-box version || true
+}
+
+prepare_dirs() {
+  mkdir -p "${CONFIG_DIR}"
+  mkdir -p "${CERT_DIR}"
+  chmod 700 "${CONFIG_DIR}"
+  chmod 700 "${CERT_DIR}"
+}
+
+backup_existing_config() {
+  if [[ -f "${CONFIG_PATH}" ]]; then
+    BACKUP_CONFIG="${CONFIG_PATH}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -a "${CONFIG_PATH}" "${BACKUP_CONFIG}"
+    chmod 600 "${BACKUP_CONFIG}"
+    log_success "已备份旧配置: ${BACKUP_CONFIG}"
+  else
+    log_info "未发现旧配置，跳过备份"
+  fi
+}
+
+generate_config() {
+  log_info "生成 sing-box 配置..."
+
+  TMP_CONFIG="$(mktemp /tmp/sing-box-config.XXXXXX.json)"
+
+  jq -n \
+    --arg log_level "${LOG_LEVEL}" \
+    --arg trojan_domain "${TROJAN_DOMAIN}" \
+    --arg hysteria_domain "${HYSTERIA_DOMAIN}" \
+    --arg acme_email "${ACME_EMAIL}" \
+    --arg cert_dir "${CERT_DIR}" \
+    --arg cf_dns_edit_token "${CF_DNS_EDIT_TOKEN}" \
+    --arg cf_zone_read_token "${CF_ZONE_READ_TOKEN:-}" \
+    --arg tj_password "${TROJAN_PASSWORD}" \
+    --arg hy2_password "${HYSTERIA_PASSWORD}" \
+    --arg hy2_obfs_password "${HYSTERIA_OBFS_PASSWORD}" \
+    --arg proxy_host "${PROXY_HOST}" \
+    --arg proxy_user "${PROXY_USER}" \
+    --arg proxy_pass "${PROXY_PASS}" \
+    --arg urltest_url "${URLTEST_URL}" \
+    --arg urltest_interval "${URLTEST_INTERVAL}" \
+    --argjson trojan_port "${TROJAN_PORT}" \
+    --argjson hysteria_port "${HYSTERIA_PORT}" \
+    --argjson proxy_port "${PROXY_PORT}" \
+    --argjson hy2_up_mbps "${HYSTERIA_UP_MBPS}" \
+    --argjson hy2_down_mbps "${HYSTERIA_DOWN_MBPS}" \
+    --argjson urltest_tolerance "${URLTEST_TOLERANCE}" \
+    '
+    def cf_dns01:
+      ({
+        provider: "cloudflare",
+        api_token: $cf_dns_edit_token
+      } + (if ($cf_zone_read_token | length) > 0
+           then { zone_token: $cf_zone_read_token }
+           else {}
+           end));
+
+    {
+      log: {
+        level: $log_level,
+        timestamp: true
+      },
+      dns: {
+        servers: [
+          {
+            type: "local",
+            tag: "dns-local"
+          }
+        ]
+      },
+      inbounds: [
+        {
+          type: "trojan",
+          tag: "trojan-in",
+          listen: "::",
+          listen_port: $trojan_port,
+          users: [
+            {
+              name: "tj-main",
+              password: $tj_password
+            }
+          ],
+          tls: {
+            enabled: true,
+            server_name: $trojan_domain,
+            alpn: ["h2", "http/1.1"],
+            acme: {
+              domain: [$trojan_domain],
+              data_directory: $cert_dir,
+              email: $acme_email,
+              provider: "letsencrypt",
+              disable_http_challenge: true,
+              disable_tls_alpn_challenge: true,
+              dns01_challenge: cf_dns01
+            }
+          }
+        },
+        {
+          type: "hysteria2",
+          tag: "hy2-in",
+          listen: "::",
+          listen_port: $hysteria_port,
+          up_mbps: $hy2_up_mbps,
+          down_mbps: $hy2_down_mbps,
+          obfs: {
+            type: "salamander",
+            password: $hy2_obfs_password
+          },
+          users: [
+            {
+              name: "hy2-main",
+              password: $hy2_password
+            }
+          ],
+          tls: {
+            enabled: true,
+            server_name: $hysteria_domain,
+            alpn: ["h3"],
+            acme: {
+              domain: [$hysteria_domain],
+              data_directory: $cert_dir,
+              email: $acme_email,
+              provider: "letsencrypt",
+              disable_http_challenge: true,
+              disable_tls_alpn_challenge: true,
+              dns01_challenge: cf_dns01
+            }
+          }
+        }
+      ],
+      outbounds: [
+        {
+          type: "socks",
+          tag: "isp-out",
+          server: $proxy_host,
+          server_port: $proxy_port,
+          version: "5",
+          username: $proxy_user,
+          password: $proxy_pass
+        },
+        {
+          type: "direct",
+          tag: "direct-out"
+        },
+        {
+          type: "urltest",
+          tag: "egress-auto",
+          outbounds: ["isp-out", "direct-out"],
+          url: $urltest_url,
+          interval: $urltest_interval,
+          tolerance: $urltest_tolerance,
+          interrupt_exist_connections: false
+        },
+        {
+          type: "block",
+          tag: "block"
+        }
+      ],
+      route: {
+        final: "egress-auto",
+        auto_detect_interface: true,
+        default_domain_resolver: "dns-local"
+      }
+    }
+    ' > "${TMP_CONFIG}"
+
+  chmod 600 "${TMP_CONFIG}"
+  log_success "临时配置已生成: ${TMP_CONFIG}"
+}
+
+validate_generated_config() {
+  log_info "校验 sing-box 配置..."
+  sing-box check -c "${TMP_CONFIG}"
+  log_success "配置校验通过"
+}
+
+deploy_config() {
+  log_info "写入正式配置..."
+  install -m 600 "${TMP_CONFIG}" "${CONFIG_PATH}"
+  log_success "配置已写入: ${CONFIG_PATH}"
+}
+
+setup_firewall() {
+  if (( SKIP_FIREWALL == 1 )); then
+    log_warn "按参数要求跳过防火墙配置"
+    return
+  fi
+
+  if ! is_true "${ENABLE_UFW}"; then
+    log_warn "ENABLE_UFW=${ENABLE_UFW}，跳过 UFW 配置"
+    return
+  fi
+
+  log_info "增量配置 UFW（不会 reset 现有规则）..."
+
+  command -v ufw >/dev/null 2>&1 || {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y ufw
+  }
+
+  ufw allow "${SSH_PORT}/tcp" comment 'SSH' >/dev/null || true
+  ufw allow "${TROJAN_PORT}/tcp" comment 'sing-box Trojan' >/dev/null || true
+  ufw allow "${HYSTERIA_PORT}/udp" comment 'sing-box Hysteria2' >/dev/null || true
+
+  if ufw status | grep -qi "Status: inactive"; then
+    ufw --force enable >/dev/null
+  else
+    ufw reload >/dev/null || true
+  fi
+
+  log_success "UFW 已处理完成"
+}
+
+restart_service() {
+  if (( NO_START == 1 )); then
+    log_warn "按参数要求跳过启动/重启服务"
+    return
+  fi
+
+  log_info "启用并重启 sing-box..."
+  systemctl daemon-reload
+  systemctl enable sing-box >/dev/null
+  if systemctl restart sing-box; then
+    log_success "sing-box 已成功启动/重启"
+    return
+  fi
+
+  log_error "sing-box 启动失败，开始回滚"
+
+  journalctl -u sing-box --no-pager -n 50 || true
+
+  if [[ -n "${BACKUP_CONFIG}" && -f "${BACKUP_CONFIG}" ]]; then
+    log_warn "回滚到旧配置: ${BACKUP_CONFIG}"
+    install -m 600 "${BACKUP_CONFIG}" "${CONFIG_PATH}"
+
+    if sing-box check -c "${CONFIG_PATH}" >/dev/null 2>&1; then
+      systemctl restart sing-box || true
+    fi
+  fi
+
+  log_error "部署失败，请检查日志：journalctl -u sing-box -f"
+  exit 1
+}
+
+write_summary() {
+  local summary_file="${SCRIPT_DIR}/deploy-summary.txt"
+  cat > "${summary_file}" <<EOF
+部署时间: $(date '+%Y-%m-%d %H:%M:%S')
+
+[服务端入口]
+Trojan:
+  域名: ${TROJAN_DOMAIN}
+  端口: ${TROJAN_PORT}
+  SNI : ${TROJAN_DOMAIN}
+
+Hysteria2:
+  域名: ${HYSTERIA_DOMAIN}
+  端口: ${HYSTERIA_PORT}
+  SNI : ${HYSTERIA_DOMAIN}
+  OBFS: salamander
+
+[服务端出口]
+主出口: 1024proxy SOCKS5 (${PROXY_HOST}:${PROXY_PORT})
+备出口: VPS 直连
+自动切换: 已启用（urltest）
+
+[文件]
+配置文件: ${CONFIG_PATH}
+证书目录: ${CERT_DIR}
+备份配置: ${BACKUP_CONFIG:-无}
+
+[常用命令]
+检查配置: sing-box check -c ${CONFIG_PATH}
+查看状态: systemctl status sing-box
+查看日志: journalctl -u sing-box -f
+重启服务: systemctl restart sing-box
+EOF
+  chmod 600 "${summary_file}"
+  log_success "部署摘要已写入: ${summary_file}"
+}
+
+show_final_info() {
+  echo
+  echo "=================================================="
+  echo -e "${GREEN}部署完成${NC}"
+  echo "=================================================="
+  echo "Trojan    : ${TROJAN_DOMAIN}:${TROJAN_PORT}"
+  echo "Hysteria2 : ${HYSTERIA_DOMAIN}:${HYSTERIA_PORT}"
+  echo "主出口     : 1024proxy SOCKS5 -> IP2"
+  echo "备出口     : VPS direct -> IP1"
+  echo "配置文件   : ${CONFIG_PATH}"
+  [[ -n "${BACKUP_CONFIG}" ]] && echo "配置备份   : ${BACKUP_CONFIG}"
+  echo "日志命令   : journalctl -u sing-box -f"
+  echo "=================================================="
+  echo
+  echo "提示：客户端密码以 .env 中填写的值为准，本脚本不会把密码明文写入摘要文件。"
+}
+
+# -----------------------------
+# 验证订阅是否正常
+# -----------------------------
+verify_subscription() {
+  log_info "验证订阅链接..."
+  
+  local domain="${SUB_DOMAIN}"
+  local max_retry=3
+  local retry=0
+  local v2_ok=0
+  local c_ok=0
+  
+  # 等待几秒让部署生效
+  sleep 2
+  
+  while [[ $retry -lt $max_retry ]]; do
+    # 验证 v2rayN 订阅
+    if [[ $v2_ok -eq 0 ]]; then
+      local v2_content=$(curl -sL --max-time 10 "https://${domain}/v2" 2>/dev/null | base64 -d 2>/dev/null)
+      if echo "$v2_content" | grep -q "trojan://"; then
+        local v2_node_count=$(echo "$v2_content" | grep -c "://")
+        log_success "v2rayN 订阅正常: 发现 ${v2_node_count} 个节点"
+        # 显示节点名称
+        echo "$v2_content" | grep -oP '#\K[^ ]+' | while read name; do
+          log_info "  └─ 节点: $name"
+        done
+        v2_ok=1
+      else
+        log_warn "v2rayN 订阅验证失败，重试..."
+      fi
+    fi
+    
+    # 验证 Clash 订阅
+    if [[ $c_ok -eq 0 ]]; then
+      local c_content=$(curl -sL --max-time 10 "https://${domain}/c" 2>/dev/null)
+      if echo "$c_content" | grep -q "proxies:"; then
+        local c_node_count=$(echo "$c_content" | grep -c "name:")
+        log_success "Clash 订阅正常: 发现 ${c_node_count} 个节点"
+        v2_ok=1
+        c_ok=1
+      else
+        log_warn "Clash 订阅验证失败，重试..."
+      fi
+    fi
+    
+    # 都成功则退出
+    if [[ $v2_ok -eq 1 && $c_ok -eq 1 ]]; then
+      log_success "订阅验证全部通过！"
+      return 0
+    fi
+    
+    retry=$((retry + 1))
+    if [[ $retry -lt $max_retry ]]; then
+      sleep 3
+    fi
+  done
+  
+  # 验证失败
+  if [[ $v2_ok -eq 0 ]]; then
+    log_error "v2rayN 订阅验证失败: https://${domain}/v2"
+  fi
+  if [[ $c_ok -eq 0 ]]; then
+    log_error "Clash 订阅验证失败: https://${domain}/c"
+  fi
+  log_info "请检查: 1) DNS 解析 2) Cloudflare Pages 部署状态 3) 自定义域名绑定"
+  return 1
+}
+
+# -----------------------------
+# 自动更新 Cloudflare Pages 订阅配置
+# -----------------------------
+update_cloudflare_pages() {
+  # 检查是否配置了 CF_API_TOKEN
+  if [[ -z "${CF_API_TOKEN:-}" ]]; then
+    log_warn "未配置 CF_API_TOKEN，跳过 Cloudflare Pages 自动部署"
+    log_info "如需自动部署，请在 .env 中添加: CF_API_TOKEN=你的Token"
+    return 0
+  fi
+
+  # 检查 CF_ACCOUNT_ID
+  if [[ -z "${CF_ACCOUNT_ID:-}" ]]; then
+    log_warn "未配置 CF_ACCOUNT_ID，跳过 Cloudflare Pages 自动部署"
+    return 0
+  fi
+
+  local pages_dir="${SCRIPT_DIR}/cloudflare-pages-sub"
+  local functions_dir="${pages_dir}/functions"
+  
+  # 检查目录是否存在
+  if [[ ! -d "$pages_dir" ]]; then
+    log_warn "未找到 cloudflare-pages-sub 目录，跳过自动部署"
+    return 0
+  fi
+
+  log_info "开始更新 Cloudflare Pages 订阅配置..."
+
+  # 确保 functions 目录存在
+  mkdir -p "$functions_dir"
+
+  # 生成 v2.js (v2rayN 订阅) - URI 格式
+  # v2rayN 需要 Base64 编码的 URI 列表，不是 JSON
+  cat > "${functions_dir}/v2.js" <<'V2JS'
+// v2rayN 订阅接口 - 返回 Base64 编码的 URI 列表
+export async function onRequest(context) {
+  // 获取 URL 参数
+  const url = new URL(context.request.url);
+  const isRaw = url.searchParams.get('raw') === '1';
+  
+  // Trojan URI - 密码已 URL 编码 (+ -> %2B, = -> %3D)
+  const trojanUri = `trojan://TROJAN_PASSWORD_PLACEHOLDER@TROJAN_DOMAIN_PLACEHOLDER:TROJAN_PORT_PLACEHOLDER?security=tls&sni=TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#SUB_REMARKS_PLACEHOLDER-TJ`;
+  
+  // Hysteria2 URI - 官方格式: host:port/?key=value (带斜杠)
+  // 密码已 URL 编码，添加 insecure=0 明确禁用证书验证跳过
+  const hy2Uri = `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@HYSTERIA_DOMAIN_PLACEHOLDER:HYSTERIA_PORT_PLACEHOLDER/?sni=HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#SUB_REMARKS_PLACEHOLDER-HY2`;
+  
+  // 合并
+  const uriList = [trojanUri, hy2Uri].join('\n');
+  
+  // 如果 raw=1，返回原始文本
+  if (isRaw) {
+    return new Response(uriList, {
+      status: 200,
+      headers: { 
+        'Content-Type': 'text/plain; charset=utf-8', 
+        'Cache-Control': 'no-cache', 
+        'Access-Control-Allow-Origin': '*'
+      }
+    });
+  }
+  
+  // 否则返回 Base64 编码（标准 v2rayN 订阅格式）
+  const encoder = new TextEncoder();
+  const data = encoder.encode(uriList);
+  const base64Config = btoa(String.fromCharCode(...data));
+  
+  return new Response(base64Config, {
+    status: 200,
+    headers: { 
+      'Content-Type': 'text/plain; charset=utf-8', 
+      'Cache-Control': 'no-cache', 
+      'Access-Control-Allow-Origin': '*',
+      'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0'
+    }
+  });
+}
+V2JS
+
+  # URL 编码密码 (处理 + = 等特殊字符)
+  local trojan_password_encoded=$(echo -n "${TROJAN_PASSWORD}" | jq -sRr @uri)
+  local hy2_password_encoded=$(echo -n "${HYSTERIA_PASSWORD}" | jq -sRr @uri)
+  local obfs_password_encoded=$(echo -n "${HYSTERIA_OBFS_PASSWORD}" | jq -sRr @uri)
+  
+  # 替换 v2.js 中的占位符
+  sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${functions_dir}/v2.js"
+  sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${functions_dir}/v2.js"
+  sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${trojan_password_encoded}|g" "${functions_dir}/v2.js"
+  sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${functions_dir}/v2.js"
+  sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${functions_dir}/v2.js"
+  sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${hy2_password_encoded}|g" "${functions_dir}/v2.js"
+  sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${obfs_password_encoded}|g" "${functions_dir}/v2.js"
+  sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${functions_dir}/v2.js"
+  sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${functions_dir}/v2.js"
+  sed -i "s|SUB_REMARKS_PLACEHOLDER|${SUB_REMARKS:-US-ISP}|g" "${functions_dir}/v2.js"
+
+  # 生成 c.js (Clash 订阅) - 完整双层结构配置
+  cat > "${functions_dir}/c.js" <<'CJS'
+// Clash 订阅接口 - 返回完整双层结构配置
+export async function onRequest(context) {
+  const config = `mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: warning
+ipv6: true
+unified-delay: true
+tcp-concurrent: true
+global-client-fingerprint: chrome
+external-controller: 127.0.0.1:9090
+secret: "SECRET_PLACEHOLDER"
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+  skip-domain:
+    - "Mijia Cloud"
+    - "+.push.apple.com"
+
+dns:
+  enable: true
+  ipv6: true
+  enhanced-mode: fake-ip
+  cache-algorithm: arc
+  use-hosts: true
+  use-system-hosts: true
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "+.lan"
+    - "+.local"
+    - "+.market.xiaomi.com"
+    - "TROJAN_DOMAIN_PLACEHOLDER"
+    - "HYSTERIA_DOMAIN_PLACEHOLDER"
+  default-nameserver:
+    - 223.5.5.5
+    - 223.6.6.6
+  proxy-server-nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  fallback:
+    - tls://1.1.1.1
+    - tls://8.8.4.4
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
+
+proxies:
+  - name: "SUB_REMARKS_PLACEHOLDER-TJ"
+    type: trojan
+    server: TROJAN_DOMAIN_PLACEHOLDER
+    port: TROJAN_PORT_PLACEHOLDER
+    password: "TROJAN_PASSWORD_PLACEHOLDER"
+    udp: true
+    sni: TROJAN_DOMAIN_PLACEHOLDER
+    alpn:
+      - h2
+      - http/1.1
+    skip-cert-verify: false
+
+  - name: "SUB_REMARKS_PLACEHOLDER-HY2"
+    type: hysteria2
+    server: HYSTERIA_DOMAIN_PLACEHOLDER
+    port: HYSTERIA_PORT_PLACEHOLDER
+    password: "HYSTERIA_PASSWORD_PLACEHOLDER"
+    obfs: salamander
+    obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
+    alpn:
+      - h3
+    sni: HYSTERIA_DOMAIN_PLACEHOLDER
+    skip-cert-verify: false
+    up: "HYSTERIA_UP_PLACEHOLDER Mbps"
+    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"
+
+proxy-groups:
+  - name: "🛡️ 自动容灾"
+    type: fallback
+    proxies:
+      - "SUB_REMARKS_PLACEHOLDER-TJ"
+      - "SUB_REMARKS_PLACEHOLDER-HY2"
+    url: "https://cp.cloudflare.com"
+    interval: 300
+    timeout: 3000
+
+  - name: "♻️ 自动选择"
+    type: url-test
+    proxies:
+      - "SUB_REMARKS_PLACEHOLDER-TJ"
+      - "SUB_REMARKS_PLACEHOLDER-HY2"
+    url: "https://cp.cloudflare.com"
+    interval: 300
+    tolerance: 50
+    timeout: 3000
+
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - "SUB_REMARKS_PLACEHOLDER-TJ"
+      - "SUB_REMARKS_PLACEHOLDER-HY2"
+      - DIRECT
+
+  - name: "🤖 AI 服务"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - DIRECT
+
+  - name: "🌍 国外媒体"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - DIRECT
+
+  - name: "📲 电报信息"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - DIRECT
+
+  - name: "Ⓜ️ 微软服务"
+    type: select
+    proxies:
+      - "🎯 全球直连"
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+
+  - name: "🍎 苹果服务"
+    type: select
+    proxies:
+      - "🎯 全球直连"
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+
+  - name: "📢 谷歌FCM"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - "🎯 全球直连"
+
+  - name: "🐙 开发平台"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - DIRECT
+
+  - name: "🎮 Steam 游戏"
+    type: select
+    proxies:
+      - "🎯 全球直连"
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+
+  - name: "🎯 全球直连"
+    type: select
+    proxies:
+      - DIRECT
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+
+  - name: "🛑 全球拦截"
+    type: select
+    proxies:
+      - REJECT
+      - DIRECT
+
+  - name: "🍃 应用净化"
+    type: select
+    proxies:
+      - REJECT
+      - DIRECT
+
+  - name: "🐟 漏网之鱼"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - "🎯 全球直连"
+      - "SUB_REMARKS_PLACEHOLDER-TJ"
+      - "SUB_REMARKS_PLACEHOLDER-HY2"
+      - DIRECT
+
+rules:
+  # --- 基础直连 / 私网 ---
+  - GEOSITE,private,🎯 全球直连
+  - GEOIP,private,🎯 全球直连,no-resolve
+  - DOMAIN-SUFFIX,lan,🎯 全球直连
+  - DOMAIN-SUFFIX,internal,🎯 全球直连
+  - IP-CIDR,0.0.0.0/8,🎯 全球直连,no-resolve
+  - IP-CIDR,10.0.0.0/8,🎯 全球直连,no-resolve
+  - IP-CIDR,100.64.0.0/10,🎯 全球直连,no-resolve
+  - IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve
+  - IP-CIDR,169.254.0.0/16,🎯 全球直连,no-resolve
+  - IP-CIDR,172.16.0.0/12,🎯 全球直连,no-resolve
+  - IP-CIDR,192.168.0.0/16,🎯 全球直连,no-resolve
+  - IP-CIDR,198.18.0.0/16,🎯 全球直连,no-resolve
+  - IP-CIDR,224.0.0.0/4,🎯 全球直连,no-resolve
+  - IP-CIDR6,::1/128,🎯 全球直连,no-resolve
+  - IP-CIDR6,fc00::/7,🎯 全球直连,no-resolve
+  - IP-CIDR6,fe80::/10,🎯 全球直连,no-resolve
+
+  # --- DNS 服务直连（防止循环依赖）---
+  - DOMAIN-SUFFIX,doh.pub,🎯 全球直连
+  - DOMAIN-SUFFIX,dns.alidns.com,🎯 全球直连
+  - IP-CIDR,223.5.5.5/32,🎯 全球直连,no-resolve
+  - IP-CIDR,223.6.6.6/32,🎯 全球直连,no-resolve
+  - IP-CIDR,119.29.29.29/32,🎯 全球直连,no-resolve
+
+  # --- 拦截 / 应用净化 ---
+  - GEOSITE,category-ads-all,🛑 全球拦截
+  - GEOSITE,tracker,🍃 应用净化
+  - DOMAIN-SUFFIX,app.adjust.com,🍃 应用净化
+  - DOMAIN-SUFFIX,appsflyer.com,🍃 应用净化
+  - DOMAIN-SUFFIX,google-analytics.com,🍃 应用净化
+  - DOMAIN-SUFFIX,doubleclick.net,🍃 应用净化
+  - DOMAIN-SUFFIX,googlesyndication.com,🍃 应用净化
+  - DOMAIN-SUFFIX,googleadservices.com,🍃 应用净化
+  - DOMAIN-SUFFIX,ads.twitter.com,🍃 应用净化
+  - DOMAIN-SUFFIX,analytics.twitter.com,🍃 应用净化
+  - DOMAIN-SUFFIX,events.statsigapi.net,🍃 应用净化
+  - DOMAIN-SUFFIX,featuregates.org,🍃 应用净化
+  - DOMAIN-SUFFIX,intercom.io,🍃 应用净化
+  - DOMAIN-SUFFIX,intercomcdn.com,🍃 应用净化
+
+  # --- AI 服务 ---
+  - GEOSITE,openai,🤖 AI 服务
+  - DOMAIN-SUFFIX,anthropic.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,claude.ai,🤖 AI 服务
+  - DOMAIN-SUFFIX,claude.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,claudeusercontent.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,client-api.arkoselabs.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,generativelanguage.googleapis.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,gemini.google.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,makersuite.google.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,notebooklm.google.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,ai.google.dev,🤖 AI 服务
+  - DOMAIN-SUFFIX,aistudio.google.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,copilot.microsoft.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,copilot.cloud.microsoft,🤖 AI 服务
+  - DOMAIN-SUFFIX,api.githubcopilot.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,copilot-proxy.githubusercontent.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,groq.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,together.xyz,🤖 AI 服务
+  - DOMAIN-SUFFIX,mistral.ai,🤖 AI 服务
+  - DOMAIN-SUFFIX,perplexity.ai,🤖 AI 服务
+  - DOMAIN-SUFFIX,sora.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,x.ai,🤖 AI 服务
+  - DOMAIN-SUFFIX,meta.ai,🤖 AI 服务
+  - DOMAIN-SUFFIX,jetbrains.ai,🤖 AI 服务
+  - DOMAIN-SUFFIX,grazie.ai,🤖 AI 服务
+  - DOMAIN-SUFFIX,grazie.aws.intellij.net,🤖 AI 服务
+  - DOMAIN-SUFFIX,cursor.com,🤖 AI 服务
+  - DOMAIN-SUFFIX,cursor.sh,🤖 AI 服务
+
+  # --- Telegram ---
+  - GEOSITE,telegram,📲 电报信息
+  - GEOIP,telegram,📲 电报信息,no-resolve
+
+  # --- Microsoft / OneDrive ---
+  - GEOSITE,microsoft@cn,🎯 全球直连
+  - GEOSITE,onedrive,Ⓜ️ 微软服务
+  - GEOSITE,microsoft,Ⓜ️ 微软服务
+
+  # --- Apple ---
+  - DOMAIN-SUFFIX,tv.apple.com,🌍 国外媒体
+  - GEOSITE,apple-cn,🎯 全球直连
+  - GEOSITE,apple,🍎 苹果服务
+
+  # --- Google FCM ---
+  - DOMAIN-SUFFIX,mtalk.google.com,📢 谷歌FCM
+
+  # --- 开发 / 平台 ---
+  - GEOSITE,github,🐙 开发平台
+  - DOMAIN-SUFFIX,gitlab.com,🐙 开发平台
+  - DOMAIN-SUFFIX,gitlab.io,🐙 开发平台
+  - DOMAIN-SUFFIX,docker.com,🐙 开发平台
+  - DOMAIN-SUFFIX,docker.io,🐙 开发平台
+  - DOMAIN-SUFFIX,dockerhub.com,🐙 开发平台
+  - DOMAIN-SUFFIX,quay.io,🐙 开发平台
+  - DOMAIN-SUFFIX,gcr.io,🐙 开发平台
+  - DOMAIN-SUFFIX,maven.org,🐙 开发平台
+  - DOMAIN-SUFFIX,mvnrepository.com,🐙 开发平台
+  - DOMAIN-SUFFIX,sonatype.org,🐙 开发平台
+  - DOMAIN-SUFFIX,apache.org,🐙 开发平台
+  - DOMAIN-SUFFIX,sourcegraph.com,🐙 开发平台
+  - DOMAIN-SUFFIX,stackoverflow.com,🐙 开发平台
+  - DOMAIN-SUFFIX,medium.com,🐙 开发平台
+  - DOMAIN-SUFFIX,reddit.com,🐙 开发平台
+  - DOMAIN-SUFFIX,discord.com,🐙 开发平台
+  - DOMAIN-SUFFIX,discord.gg,🐙 开发平台
+  - DOMAIN-SUFFIX,discordapp.com,🐙 开发平台
+  - DOMAIN-SUFFIX,discordapp.net,🐙 开发平台
+
+  # --- Steam / 游戏 ---
+  - GEOSITE,steam@cn,🎯 全球直连
+  - DOMAIN-SUFFIX,steampowered.com,🎮 Steam 游戏
+  - DOMAIN-SUFFIX,steamcommunity.com,🎮 Steam 游戏
+  - DOMAIN-SUFFIX,steamstatic.com,🎮 Steam 游戏
+  - DOMAIN-SUFFIX,steamusercontent.com,🎮 Steam 游戏
+  - DOMAIN-SUFFIX,steamcontent.com,🎮 Steam 游戏
+  - DOMAIN-SUFFIX,steamserver.net,🎮 Steam 游戏
+  - DOMAIN-SUFFIX,steam-chat.com,🎮 Steam 游戏
+  - DOMAIN-SUFFIX,steamstat.us,🎮 Steam 游戏
+
+  # --- 国外媒体 / 海外内容 ---
+  - GEOSITE,youtube,🌍 国外媒体
+  - GEOSITE,netflix,🌍 国外媒体
+  - GEOSITE,spotify,🌍 国外媒体
+  - GEOSITE,tiktok,🌍 国外媒体
+  - GEOSITE,bahamut,🌍 国外媒体
+  - GEOSITE,biliintl,🌍 国外媒体
+  - DOMAIN-SUFFIX,disneyplus.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,disney-plus.net,🌍 国外媒体
+  - DOMAIN-SUFFIX,disneystreaming.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,hbomax.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,hbo.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,hulu.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,abema.tv,🌍 国外媒体
+  - DOMAIN-SUFFIX,abema.io,🌍 国外媒体
+  - DOMAIN-SUFFIX,bbc.co.uk,🌍 国外媒体
+  - DOMAIN-SUFFIX,bbc.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,dazn.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,primevideo.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,amazonvideo.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,viu.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,viu.tv,🌍 国外媒体
+  - DOMAIN-SUFFIX,mytvsuper.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,channel4.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,itv.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,pandora.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,soundcloud.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,deezer.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,qobuz.com,🌍 国外媒体
+  - DOMAIN-SUFFIX,tidal.com,🌍 国外媒体
+
+  # --- 常见国际站点 ---
+  - DOMAIN-SUFFIX,googleapis.com,🚀 节点选择
+  - DOMAIN-SUFFIX,gstatic.com,🚀 节点选择
+  - DOMAIN-SUFFIX,ggpht.com,🚀 节点选择
+  - DOMAIN-SUFFIX,googlevideo.com,🚀 节点选择
+  - DOMAIN-SUFFIX,facebook.com,🚀 节点选择
+  - DOMAIN-SUFFIX,fb.com,🚀 节点选择
+  - DOMAIN-SUFFIX,fbcdn.net,🚀 节点选择
+  - DOMAIN-SUFFIX,instagram.com,🚀 节点选择
+  - DOMAIN-SUFFIX,cdninstagram.com,🚀 节点选择
+  - DOMAIN-SUFFIX,x.com,🚀 节点选择
+  - DOMAIN-SUFFIX,twitter.com,🚀 节点选择
+  - DOMAIN-SUFFIX,twimg.com,🚀 节点选择
+  - DOMAIN-SUFFIX,whatsapp.com,🚀 节点选择
+  - DOMAIN-SUFFIX,whatsapp.net,🚀 节点选择
+  - DOMAIN-SUFFIX,linkedin.com,🚀 节点选择
+  - DOMAIN-SUFFIX,dropbox.com,🚀 节点选择
+  - DOMAIN-SUFFIX,dropboxusercontent.com,🚀 节点选择
+  - DOMAIN-SUFFIX,notion.so,🚀 节点选择
+  - DOMAIN-SUFFIX,1password.com,🚀 节点选择
+  - DOMAIN-SUFFIX,zoom.us,🚀 节点选择
+  - DOMAIN-SUFFIX,wikipedia.org,🚀 节点选择
+  - DOMAIN-SUFFIX,wikimedia.org,🚀 节点选择
+  - DOMAIN-SUFFIX,terabox.com,🚀 节点选择
+  - DOMAIN-SUFFIX,teraboxcdn.com,🚀 节点选择
+
+  # --- 中国直连 ---
+  - GEOSITE,cn,🎯 全球直连
+  - GEOIP,CN,🎯 全球直连,no-resolve
+
+  # --- 海外其余流量 ---
+  - GEOSITE,geolocation-!cn,🚀 节点选择
+
+  # --- 最终兜底 ---
+  - MATCH,🐟 漏网之鱼
+`;
+  return new Response(config, {
+    status: 200,
+    headers: { 
+      'Content-Type': 'text/yaml; charset=utf-8', 
+      'Cache-Control': 'no-cache', 
+      'Access-Control-Allow-Origin': '*' 
+    }
+  });
+}
+CJS
+
+  # 替换 c.js 中的占位符
+  # 生成或获取 secret
+  local secret="${SECRET:-}"
+  if [[ -z "$secret" ]]; then
+    secret=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-32)
+  fi
+  # 生成或获取隐藏订阅路径
+  local hidden_path="${HIDDEN_SUB_PATH:-}"
+  if [[ -z "$hidden_path" ]]; then
+    hidden_path=$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-16)
+  fi
+  # 构建隐藏订阅 URL
+  local hidden_sub_url="https://${SUB_DOMAIN}/${hidden_path}/nodes"
+  # 小写的订阅别名（用于文件名）
+  local sub_remarks_lower=$(echo "${SUB_REMARKS:-US-ISP}" | tr '[:upper:]' '[:lower:]')
+  
+  sed -i "s|SECRET_PLACEHOLDER|${secret}|g" "${functions_dir}/c.js"
+  sed -i "s|HIDDEN_SUB_URL_PLACEHOLDER|${hidden_sub_url}|g" "${functions_dir}/c.js"
+  sed -i "s|SUB_REMARKS_LOWER_PLACEHOLDER|${sub_remarks_lower}|g" "${functions_dir}/c.js"
+  sed -i "s|SUB_REMARKS_PLACEHOLDER|${SUB_REMARKS:-US-ISP}|g" "${functions_dir}/c.js"
+  sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${functions_dir}/c.js"
+  sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${functions_dir}/c.js"
+  sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${TROJAN_PASSWORD}|g" "${functions_dir}/c.js"
+  sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${functions_dir}/c.js"
+  sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${functions_dir}/c.js"
+  sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${HYSTERIA_PASSWORD}|g" "${functions_dir}/c.js"
+  sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${HYSTERIA_OBFS_PASSWORD}|g" "${functions_dir}/c.js"
+  sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${functions_dir}/c.js"
+  sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${functions_dir}/c.js"
+  
+  # 生成 _redirects（每次重建，确保隐藏路径始终最新）
+  cat > "${pages_dir}/_redirects" <<REDIRECTS
+# Cloudflare Pages 重定向规则
+# 格式: <source> <destination> [status]
+
+# 隐藏订阅路径 - 外部 providers 使用
+/${hidden_path}/nodes /nodes.yaml 200
+
+# v2rayN 订阅接口
+/v2 /v2 200
+
+# Clash 订阅接口
+/c /c 200
+REDIRECTS
+
+  log_success "订阅配置文件已更新"
+
+  # 检查 wrangler 是否安装
+  if ! command -v wrangler &>/dev/null; then
+    log_warn "wrangler CLI 未安装，跳过自动部署"
+    log_info "手动部署命令: cd ${pages_dir} && wrangler pages deploy ."
+    return 0
+  fi
+
+  log_info "开始部署到 Cloudflare Pages..."
+  
+  # 执行部署
+  if (cd "$pages_dir" && CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="sub-converter" --branch=main 2>&1); then
+    log_success "Cloudflare Pages 部署完成"
+    log_info "订阅链接: https://${SUB_DOMAIN}/v2 (v2rayN)"
+    log_info "订阅链接: https://${SUB_DOMAIN}/c (Clash)"
+    
+    # 验证订阅
+    verify_subscription
+  else
+    log_error "Cloudflare Pages 部署失败"
+    log_info "请手动执行: cd ${pages_dir} && wrangler pages deploy ."
+  fi
+}
+
+main() {
+  parse_args "$@"
+  require_root
+  require_supported_os
+  load_env
+  validate_config
+  install_dependencies
+  install_singbox
+  prepare_dirs
+  backup_existing_config
+  generate_config
+  validate_generated_config
+  deploy_config
+  setup_firewall
+  restart_service
+  write_summary
+  show_final_info
+  
+  # 自动更新并部署 Cloudflare Pages 订阅配置
+  update_cloudflare_pages
+}
+
+main "$@"
