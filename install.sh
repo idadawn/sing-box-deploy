@@ -1111,21 +1111,10 @@ rules:
   - GEOSITE,telegram,📲 电报信息
   - GEOIP,telegram,📲 电报信息,no-resolve
 
-  # --- Microsoft / OneDrive ---
-  - GEOSITE,microsoft@cn,🎯 全球直连
-  - GEOSITE,onedrive,Ⓜ️ 微软服务
-  - GEOSITE,microsoft,Ⓜ️ 微软服务
-
-  # --- Apple ---
-  - DOMAIN-SUFFIX,tv.apple.com,🌍 国外媒体
-  - GEOSITE,apple-cn,🎯 全球直连
-  - GEOSITE,apple,🍎 苹果服务
-
-  # --- Google FCM ---
-  - DOMAIN-SUFFIX,mtalk.google.com,📢 谷歌FCM
-
-  # --- 开发 / 平台 ---
+  # --- 开发 / 平台 (GitHub 规则必须在 Microsoft 之前以避免错误路由) ---
   - GEOSITE,github,🐙 开发平台
+  - DOMAIN-SUFFIX,github.com,🐙 开发平台
+  - DOMAIN-SUFFIX,githubusercontent.com,🐙 开发平台
   - DOMAIN-SUFFIX,gitlab.com,🐙 开发平台
   - DOMAIN-SUFFIX,gitlab.io,🐙 开发平台
   - DOMAIN-SUFFIX,docker.com,🐙 开发平台
@@ -1145,6 +1134,19 @@ rules:
   - DOMAIN-SUFFIX,discord.gg,🐙 开发平台
   - DOMAIN-SUFFIX,discordapp.com,🐙 开发平台
   - DOMAIN-SUFFIX,discordapp.net,🐙 开发平台
+
+  # --- Microsoft / OneDrive ---
+  - GEOSITE,microsoft@cn,🎯 全球直连
+  - GEOSITE,onedrive,Ⓜ️ 微软服务
+  - GEOSITE,microsoft,Ⓜ️ 微软服务
+
+  # --- Apple ---
+  - DOMAIN-SUFFIX,tv.apple.com,🌍 国外媒体
+  - GEOSITE,apple-cn,🎯 全球直连
+  - GEOSITE,apple,🍎 苹果服务
+
+  # --- Google FCM ---
+  - DOMAIN-SUFFIX,mtalk.google.com,📢 谷歌FCM
 
   # --- Steam / 游戏 ---
   - GEOSITE,steam@cn,🎯 全球直连
