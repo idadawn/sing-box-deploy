@@ -782,18 +782,43 @@ load_env_safe() {
   done < "${ENV_FILE}"
 }
 
-probe_http() {
+probe_http_once() {
   local url="$1"
   curl -fsS --max-time 12 "${url}" >/dev/null
 }
 
-probe_socks5() {
+probe_socks5_once() {
   local host="$1"
   local port="$2"
   local user="$3"
   local pass="$4"
   local url="$5"
   curl -fsS --max-time 15 --proxy "socks5://${user}:${pass}@${host}:${port}" "${url}" >/dev/null
+}
+
+retry_command() {
+  local attempts="${EGRESS_RETRY_ATTEMPTS:-5}"
+  local delay="${EGRESS_RETRY_DELAY:-15}"
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    "$@" && return 0
+    (( i < attempts )) && sleep "${delay}"
+  done
+  return 1
+}
+
+build_subject() {
+  if (( ${#problems[@]} == 1 )); then
+    case "${problems[0]}" in
+      "VPS 直连出口访问异常") printf '%s' "VPS异常-直连出口" ;;
+      "ISP-1 SOCKS5 出口访问异常") printf '%s' "VPS异常-ISP-1出口" ;;
+      "ISP-2 SOCKS5 出口访问异常") printf '%s' "VPS异常-ISP-2出口" ;;
+      "sing-box 服务未运行") printf '%s' "VPS异常-服务状态" ;;
+      *) printf '%s' "VPS异常-出口状态" ;;
+    esac
+  else
+    printf '%s' "VPS异常-多项异常"
+  fi
 }
 
 send_mail() {
@@ -837,20 +862,20 @@ main() {
     summary+=("sing-box 服务运行正常")
   fi
 
-  if probe_http "${check_url}"; then
+  if retry_command probe_http_once "${check_url}"; then
     summary+=("VPS 直连出口正常")
   else
     problems+=("VPS 直连出口访问异常")
   fi
 
-  if probe_socks5 "${PROXY_HOST}" "${PROXY_PORT}" "${PROXY_USER}" "${PROXY_PASS}" "${check_url}"; then
+  if retry_command probe_socks5_once "${PROXY_HOST}" "${PROXY_PORT}" "${PROXY_USER}" "${PROXY_PASS}" "${check_url}"; then
     summary+=("ISP-1 SOCKS5 出口正常")
   else
     problems+=("ISP-1 SOCKS5 出口访问异常")
   fi
 
   if [[ -n "${PROXY2_HOST:-}" && -n "${PROXY2_PORT:-}" && -n "${PROXY2_USER:-}" && -n "${PROXY2_PASS:-}" ]]; then
-    if probe_socks5 "${PROXY2_HOST}" "${PROXY2_PORT}" "${PROXY2_USER}" "${PROXY2_PASS}" "${check_url}"; then
+    if retry_command probe_socks5_once "${PROXY2_HOST}" "${PROXY2_PORT}" "${PROXY2_USER}" "${PROXY2_PASS}" "${check_url}"; then
       summary+=("ISP-2 SOCKS5 出口正常")
     else
       problems+=("ISP-2 SOCKS5 出口访问异常")
@@ -883,7 +908,7 @@ $(printf -- '- %s\n' "${summary[@]}")
 EOF
   )
 
-  send_mail "【sing-box告警】出口访问异常" "${body}"
+  send_mail "$(build_subject)" "${body}"
   printf '%s' "${status_body}" > "${STATE_FILE}"
 }
 
