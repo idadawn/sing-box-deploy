@@ -20,6 +20,7 @@ cloudflare-pages-sub/nodes.yaml
 backup-*/
 
 # ── Wrangler 缓存 ────────────────────────────────────────
+.wrangler/
 cloudflare-pages-sub/.wrangler/
 node_modules/
 
@@ -32,3 +33,4 @@ node_modules/
 
 # ── Claude Code 本地配置 ─────────────────────────────────
 .claude/
+.codex
