@@ -2,6 +2,10 @@
 
 这个目录将 v2rayN 和 Clash 订阅配置托管在 Cloudflare Pages 上。`functions/v2.js` 和 `functions/c.js` 由根目录的 `install.sh` 动态生成并部署，无需手动编辑。
 
+- `Clash` 订阅内置自动容灾组，顺序为 `ISP-1 -> ISP-2 -> VPS`
+- `v2rayN / v2rayNG` 订阅直接提供 `ISP-1 / ISP-2 / VPS` 手动节点
+- 服务端会将 `VPS` 节点命中的 `Gemini / Google AI` 流量自动改走 ISP 出口
+
 ## 订阅链接
 
 部署完成后，订阅链接为：
@@ -66,3 +70,4 @@ wrangler pages deploy . --project-name="sub-converter" --branch=main
 1. 配置 → 新建
 2. 订阅 URL 填写 `https://<SUB_DOMAIN>/c`
 3. 下载并启用
+4. 默认选择 `🛡️ 自动容灾` 或 `♻️ 自动选择`，即可在 `ISP-1`、`ISP-2` 与 `VPS` 之间切换

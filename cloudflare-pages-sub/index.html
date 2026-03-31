@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>US-ISP 一键订阅</title>
+  <title>多出口节点订阅</title>
   <style>
     :root {
       --bg: #0b1020;
@@ -143,12 +143,12 @@
 <body>
   <div class="wrap">
     <div class="hero">
-      <div class="badge">US-ISP 订阅入口</div>
-      <h1>一键订阅</h1>
+      <div class="badge">ISP-1 / ISP-2 / VPS</div>
+      <h1>多出口订阅入口</h1>
       <p class="sub">
-        当前仅保留两套协议与两条订阅入口：<strong>v2rayN / v2rayNG 使用 <span id="v2UrlHead"></span></strong>，
+        <strong>v2rayN / v2rayNG 使用 <span id="v2UrlHead"></span></strong>，
         <strong>Clash Verge / Mihomo / Clash 系客户端使用 <span id="cUrlHead"></span></strong>。
-        页面统一备注名展示为 <strong>US-ISP</strong>。
+        订阅中包含 <strong>ISP-1</strong>、<strong>ISP-2</strong> 和 <strong>VPS</strong> 三类节点。
       </p>
     </div>
 
@@ -157,6 +157,7 @@
         <h2>v2rayN / v2rayNG</h2>
         <p>
           使用专用订阅地址 <strong><span class="v2UrlInline"></span></strong>。
+          订阅内会直接显示 `ISP-1-TJ`、`ISP-1-HY2`、`ISP-2-*`、`VPS-*` 节点。
           Android 端可尝试直接唤起 v2rayNG；Windows 端更稳的方式仍然是复制订阅链接后，在 v2rayN 中添加订阅。
         </p>
         <div class="actions">
@@ -169,7 +170,8 @@
         <h2>Clash Verge / Mihomo</h2>
         <p>
           使用专用订阅地址 <strong><span class="cUrlInline"></span></strong>。
-          适用于 Clash Verge Rev、Mihomo Party 及多数 Clash 系客户端。
+          默认可使用 `🛡️ 自动容灾` 或 `♻️ 自动选择` 分组。
+          自动容灾顺序为 `ISP-1 -> ISP-2 -> VPS`，只有两个 ISP 都不可用时才回落到 VPS。
         </p>
         <div class="actions">
           <a id="clashLink" class="btn secondary" href="#">打开 Clash 导入</a>
@@ -180,8 +182,8 @@
 
     <div class="block">
       <h3>订阅地址</h3>
-      <div class="mono">US-ISP / v2rayN：<span id="v2Url"></span></div>
-      <div class="mono">US-ISP / Clash：<span id="cUrl"></span></div>
+      <div class="mono">v2rayN / v2rayNG：<span id="v2Url"></span></div>
+      <div class="mono">Clash / Mihomo：<span id="cUrl"></span></div>
       <div class="actions">
         <button class="btn primary" data-copy="v2">复制 v2 订阅</button>
         <button class="btn secondary" data-copy="c">复制 Clash 订阅</button>
@@ -189,15 +191,25 @@
     </div>
 
     <div class="block">
-      <h3>导入说明</h3>
+      <h3>节点说明</h3>
       <div class="tips">
-        <p><strong>v2rayN：</strong> 复制 <code class="v2UrlInline"></code>，在客户端中选择"订阅 → 添加订阅"，备注建议填写 <strong>US-ISP</strong>。</p>
-        <p><strong>v2rayNG：</strong> 可直接点击上方按钮尝试唤起；若没有自动导入，复制 <code class="v2UrlInline"></code> 到客户端中导入。</p>
-        <p><strong>Clash Verge / Mihomo：</strong> 复制 <code class="cUrlInline"></code>，或直接点击"打开 Clash 导入"。</p>
+        <p><strong>ISP-1：</strong> 原有 ISP 出口节点。</p>
+        <p><strong>ISP-2：</strong> 第二条 ISP 出口节点；只有在服务端配置了 `PROXY2_*` 后才会出现在订阅里。</p>
+        <p><strong>VPS：</strong> 服务器直连出口节点，可手动选用，也会作为 Clash 自动容灾的最后回落节点。</p>
+        <p><strong>Gemini / Google AI：</strong> 当使用 VPS 节点访问这类服务时，服务端会自动借道 ISP 出口。</p>
       </div>
     </div>
 
-    <div class="footer">Powered by Cloudflare Pages · US-ISP</div>
+    <div class="block">
+      <h3>导入说明</h3>
+      <div class="tips">
+        <p><strong>v2rayN：</strong> 复制 <code class="v2UrlInline"></code>，在客户端中选择"订阅 → 添加订阅"。导入后按需手动选择 `ISP-1 / ISP-2 / VPS` 节点。</p>
+        <p><strong>v2rayNG：</strong> 可直接点击上方按钮尝试唤起；若没有自动导入，复制 <code class="v2UrlInline"></code> 到客户端中导入。</p>
+        <p><strong>Clash Verge / Mihomo：</strong> 复制 <code class="cUrlInline"></code>，或直接点击"打开 Clash 导入"。推荐默认使用 `🛡️ 自动容灾`，让客户端在 `ISP-1 -> ISP-2 -> VPS` 之间自动切换。</p>
+      </div>
+    </div>
+
+    <div class="footer">Powered by Cloudflare Pages · ISP-1 / ISP-2 / VPS</div>
   </div>
 
   <script>
@@ -219,7 +231,7 @@
     async function copyText(text) {
       try {
         await navigator.clipboard.writeText(text);
-        alert('已复制：US-ISP');
+        alert('已复制订阅链接');
       } catch {
         const ta = document.createElement('textarea');
         ta.value = text;
@@ -227,7 +239,7 @@
         ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
-        alert('已复制：US-ISP');
+        alert('已复制订阅链接');
       }
     }
 

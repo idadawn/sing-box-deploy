@@ -1,23 +1,21 @@
 # sing-box 自动化部署方案
 
-Debian / Ubuntu 一键部署 **Trojan + Hysteria2** 双入站代理服务器，主出口走 ISP SOCKS5，备出口走 VPS 直连，URLTest 自动故障切换。订阅配置托管在 Cloudflare Pages。
+Debian / Ubuntu 一键部署 **Trojan + Hysteria2** 代理服务器，支持 `ISP-1`、可选 `ISP-2` 和 `VPS` 三类出口节点。Clash 订阅内置 `ISP-1 -> ISP-2 -> VPS` 自动容灾，v2rayN / v2rayNG 订阅同时提供 `ISP-1 / ISP-2 / VPS` 手动节点。订阅配置托管在 Cloudflare Pages。
 
 ## 架构概览
 
 ```
 客户端 (v2rayN / Clash)
     │
-    ├── Trojan  TCP:443   (tj.yourdomain.com)
-    └── Hysteria2 UDP:8443 (hy2.yourdomain.com)
+    ├── ISP-1 / ISP-2 / VPS 手动节点
+    └── Clash 自动容灾组：ISP-1 -> ISP-2 -> VPS
               │
          sing-box 服务端
               │
-         URLTest 自动切换（每 3 分钟探测）
-              │
-    ┌─────────┴─────────┐
-    │                   │
- ISP SOCKS5 出口      VPS 直连出口
-  (isp-out)           (direct-out)
+    ┌─────────┬─────────┬─────────┐
+    │         │         │
+ ISP-1     ISP-2      VPS
+ SOCKS5    SOCKS5     直连
 ```
 
 ## 前置要求
@@ -46,7 +44,8 @@ nano .env   # 填写所有必填项
 | `HYSTERIA_DOMAIN` | Hysteria2 入口域名（灰云 A 记录） |
 | `CF_DNS_EDIT_TOKEN` | Cloudflare DNS:Edit Token（申请证书用） |
 | `ACME_EMAIL` | Let's Encrypt 注册邮箱 |
-| `PROXY_HOST/PORT/USER/PASS` | ISP SOCKS5 代理凭据 |
+| `PROXY_HOST/PORT/USER/PASS` | ISP-1 SOCKS5 代理凭据 |
+| `PROXY2_HOST/PORT/USER/PASS` | ISP-2 SOCKS5 代理凭据，可选，4 项需同时填写 |
 | `TROJAN_PASSWORD` | Trojan 入站密码 |
 | `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
 | `CF_API_TOKEN` + `CF_ACCOUNT_ID` | Cloudflare Pages 部署凭据 |
@@ -73,6 +72,10 @@ sudo ./install.sh
 |--------|----------|
 | v2rayN | `https://<SUB_DOMAIN>/v2` |
 | Clash  | `https://<SUB_DOMAIN>/c`  |
+
+- `Clash` 订阅内置自动容灾组，顺序为 `ISP-1 -> ISP-2 -> VPS`
+- `v2rayN / v2rayNG` 订阅直接下发 `ISP-1-TJ`、`ISP-1-HY2`、`ISP-2-*`、`VPS-*` 节点，按需手动选择
+- 服务端额外处理 `VPS` 节点访问 `Gemini / Google AI` 的流量：命中相关规则集后自动改走 ISP 出口
 
 ### 4. 管理
 
@@ -157,6 +160,26 @@ ss -tulnp | grep -E ':443|:8443'
 ```bash
 ./manage.sh   # 选择选项 8
 ```
+
+## 服务提供商参考
+
+本方案在实际使用中采用了以下服务商（供参考，非强制要求）：
+
+### VPS 提供商：极络云
+
+本项目实际部署使用的 VPS 服务商。极络云提供性价比高的 CN2 GIA 线路，适合搭建代理服务器。
+
+- 官网: https://www.jiluoyun.com/whmcs
+- 推广链接: https://www.jiluoyun.com/whmcs/aff.php?aff=24 （支持本项目可使用此链接注册）
+
+### ISP 代理：1024proxy
+
+本项目实际使用的 ISP SOCKS5 代理服务商，提供稳定的住宅 IP 出口。
+
+- 官网: https://1024proxy.com/
+- 推广链接: https://api.1024proxy.com/share/7wstuqogm （支持本项目可使用此链接注册）
+
+> 说明：以上链接为作者实际使用的服务商，推广链接仅供参考。您可以根据自己的需求选择其他服务商，本项目不依赖特定提供商。
 
 ## License
 
