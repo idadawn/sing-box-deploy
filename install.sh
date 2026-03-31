@@ -609,24 +609,6 @@ generate_config() {
         }
       ],
       route: {
-        rule_set: [
-          {
-            tag: "ruleset-gemini",
-            type: "remote",
-            format: "binary",
-            url: "https://cdn.jsdelivr.net/gh/senshinya/singbox_ruleset@main/rule/Gemini/Gemini.srs",
-            download_detour: "ai-out",
-            update_interval: "1d"
-          },
-          {
-            tag: "ruleset-google",
-            type: "remote",
-            format: "binary",
-            url: "https://cdn.jsdelivr.net/gh/senshinya/singbox_ruleset@main/rule/Google/Google.srs",
-            download_detour: "ai-out",
-            update_interval: "1d"
-          }
-        ],
         rules: (
           [
             {
@@ -638,7 +620,16 @@ generate_config() {
             },
             {
               inbound: ["trojan-vps-in", "hy2-vps-in"],
-              rule_set: ["ruleset-gemini", "ruleset-google"],
+              domain_suffix: [
+                "gemini.google.com",
+                "aistudio.google.com",
+                "ai.google.dev",
+                "generativelanguage.googleapis.com",
+                "proactivebackend-pa.googleapis.com",
+                "alkalimakersuite-pa.clients6.google.com",
+                "makersuite.google.com",
+                "notebooklm.google.com"
+              ],
               outbound: "ai-out"
             },
             {
