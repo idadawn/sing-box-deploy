@@ -825,14 +825,17 @@ send_mail() {
   local subject="$1"
   local body="$2"
   local mail_file
+  local subject_b64
   mail_file="$(mktemp)"
+  subject_b64="$(printf '%s' "${subject}" | base64 -w 0)"
   cat > "${mail_file}" <<EOF
 From: ${SMTP_FROM}
 To: ${SMTP_TO}
-Subject: ${subject}
+Subject: =?UTF-8?B?${subject_b64}?=
 Date: $(LC_ALL=C date -R)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 ${body}
 EOF
