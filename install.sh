@@ -906,11 +906,11 @@ EOF
 
   cat > "${timer_path}" <<EOF
 [Unit]
-Description=Run sing-box egress health monitor every 5 minutes
+Description=Run sing-box egress health monitor every hour
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=5min
+OnUnitActiveSec=1h
 Unit=sing-box-egress-monitor.service
 
 [Install]
