@@ -883,7 +883,7 @@ $(printf -- '- %s\n' "${summary[@]}")
 EOF
   )
 
-  send_mail "[sing-box] 出口访问异常告警" "${body}"
+  send_mail "【sing-box告警】出口访问异常" "${body}"
   printf '%s' "${status_body}" > "${STATE_FILE}"
 }
 
@@ -906,11 +906,11 @@ EOF
 
   cat > "${timer_path}" <<EOF
 [Unit]
-Description=Run sing-box egress health monitor every hour
+Description=Run sing-box egress health monitor every 15 minutes
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=1h
+OnUnitActiveSec=15min
 Unit=sing-box-egress-monitor.service
 
 [Install]
