@@ -50,6 +50,7 @@ nano .env   # 填写所有必填项
 | `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
 | `CF_API_TOKEN` + `CF_ACCOUNT_ID` | Cloudflare Pages 部署凭据 |
 | `SUB_DOMAIN` | 订阅托管域名 |
+| `SMTP_ALERT_ENABLED` + `SMTP_*` | 可选，开启 ISP/VPS 出口异常邮件告警 |
 
 ### 2. 部署
 
@@ -65,6 +66,7 @@ sudo ./install.sh
 3. 生成并部署 `/etc/sing-box/config.json`
 4. 配置 UFW 防火墙
 5. 生成订阅文件并部署到 Cloudflare Pages
+6. 可选启用 systemd 定时出口监控与 SMTP 邮件告警
 
 ### 3. 客户端订阅
 

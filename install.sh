@@ -710,6 +710,218 @@ setup_firewall() {
   log_success "UFW 已处理完成"
 }
 
+setup_egress_monitor() {
+  local enabled="${SMTP_ALERT_ENABLED:-false}"
+  if ! is_true "${enabled}"; then
+    log_info "SMTP 告警未启用，跳过出口监控安装"
+    return 0
+  fi
+
+  local required_vars=(
+    SMTP_HOST
+    SMTP_PORT
+    SMTP_USER
+    SMTP_PASS
+    SMTP_FROM
+    SMTP_TO
+  )
+  local missing=()
+  local var
+  for var in "${required_vars[@]}"; do
+    [[ -n "${!var:-}" ]] || missing+=("${var}")
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    log_warn "SMTP 告警未完整配置，跳过出口监控安装: ${missing[*]}"
+    return 0
+  fi
+
+  local monitor_script="/usr/local/bin/sing-box-egress-monitor.sh"
+  local monitor_state_dir="/var/lib/sing-box-egress-monitor"
+  local service_path="/etc/systemd/system/sing-box-egress-monitor.service"
+  local timer_path="/etc/systemd/system/sing-box-egress-monitor.timer"
+
+  mkdir -p "${monitor_state_dir}"
+  chmod 700 "${monitor_state_dir}"
+
+  cat > "${monitor_script}" <<'MONITOR'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ENV_FILE="__ENV_FILE__"
+STATE_DIR="/var/lib/sing-box-egress-monitor"
+STATE_FILE="${STATE_DIR}/last-status"
+
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+load_env_safe() {
+  [[ -f "${ENV_FILE}" ]] || return 1
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    local line key value
+    line="$(trim "${raw_line}")"
+    [[ -z "${line}" || "${line:0:1}" == "#" ]] && continue
+    [[ "${line}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="$(trim "${key}")"
+    value="$(trim "${value}")"
+    if [[ ${#value} -ge 2 && "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+      value="${value:1:-1}"
+      value="${value//\\n/$'\n'}"
+      value="${value//\\\\/\\}"
+    elif [[ ${#value} -ge 2 && "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+      value="${value:1:-1}"
+    fi
+    printf -v "${key}" '%s' "${value}"
+    export "${key}"
+  done < "${ENV_FILE}"
+}
+
+probe_http() {
+  local url="$1"
+  curl -fsS --max-time 12 "${url}" >/dev/null
+}
+
+probe_socks5() {
+  local host="$1"
+  local port="$2"
+  local user="$3"
+  local pass="$4"
+  local url="$5"
+  curl -fsS --max-time 15 --proxy "socks5://${user}:${pass}@${host}:${port}" "${url}" >/dev/null
+}
+
+send_mail() {
+  local subject="$1"
+  local body="$2"
+  local mail_file
+  mail_file="$(mktemp)"
+  cat > "${mail_file}" <<EOF
+From: ${SMTP_FROM}
+To: ${SMTP_TO}
+Subject: ${subject}
+Date: $(LC_ALL=C date -R)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+${body}
+EOF
+
+  curl -fsS --url "smtps://${SMTP_HOST}:${SMTP_PORT}" \
+    --ssl-reqd \
+    --user "${SMTP_USER}:${SMTP_PASS}" \
+    --mail-from "${SMTP_FROM}" \
+    --mail-rcpt "${SMTP_TO}" \
+    --upload-file "${mail_file}" >/dev/null
+
+  rm -f "${mail_file}"
+}
+
+main() {
+  mkdir -p "${STATE_DIR}"
+  chmod 700 "${STATE_DIR}"
+  load_env_safe
+
+  local check_url="${EGRESS_CHECK_URL:-https://ipinfo.io/ip}"
+  local problems=()
+  local summary=()
+
+  if ! systemctl is-active --quiet sing-box; then
+    problems+=("sing-box 服务未运行")
+  else
+    summary+=("sing-box 服务运行正常")
+  fi
+
+  if probe_http "${check_url}"; then
+    summary+=("VPS 直连出口正常")
+  else
+    problems+=("VPS 直连出口访问异常")
+  fi
+
+  if probe_socks5 "${PROXY_HOST}" "${PROXY_PORT}" "${PROXY_USER}" "${PROXY_PASS}" "${check_url}"; then
+    summary+=("ISP-1 SOCKS5 出口正常")
+  else
+    problems+=("ISP-1 SOCKS5 出口访问异常")
+  fi
+
+  if [[ -n "${PROXY2_HOST:-}" && -n "${PROXY2_PORT:-}" && -n "${PROXY2_USER:-}" && -n "${PROXY2_PASS:-}" ]]; then
+    if probe_socks5 "${PROXY2_HOST}" "${PROXY2_PORT}" "${PROXY2_USER}" "${PROXY2_PASS}" "${check_url}"; then
+      summary+=("ISP-2 SOCKS5 出口正常")
+    else
+      problems+=("ISP-2 SOCKS5 出口访问异常")
+    fi
+  fi
+
+  if (( ${#problems[@]} == 0 )); then
+    rm -f "${STATE_FILE}"
+    exit 0
+  fi
+
+  local status_body
+  status_body="$(printf '%s\n' "${problems[@]}")"
+
+  if [[ -f "${STATE_FILE}" ]] && [[ "$(cat "${STATE_FILE}")" == "${status_body}" ]]; then
+    exit 0
+  fi
+
+  local body
+  body=$(
+    cat <<EOF
+检测时间: $(date '+%Y-%m-%d %H:%M:%S %Z')
+主机: $(hostname)
+
+异常项:
+$(printf -- '- %s\n' "${problems[@]}")
+
+当前正常项:
+$(printf -- '- %s\n' "${summary[@]}")
+EOF
+  )
+
+  send_mail "[sing-box] 出口访问异常告警" "${body}"
+  printf '%s' "${status_body}" > "${STATE_FILE}"
+}
+
+main "$@"
+MONITOR
+
+  sed -i "s|__ENV_FILE__|${ENV_FILE}|g" "${monitor_script}"
+  chmod 700 "${monitor_script}"
+
+  cat > "${service_path}" <<EOF
+[Unit]
+Description=sing-box egress health monitor
+After=network-online.target sing-box.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${monitor_script}
+EOF
+
+  cat > "${timer_path}" <<EOF
+[Unit]
+Description=Run sing-box egress health monitor every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=sing-box-egress-monitor.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now sing-box-egress-monitor.timer >/dev/null
+  log_success "出口监控与 SMTP 邮件告警已启用"
+}
+
 restart_service() {
   if (( NO_START == 1 )); then
     log_warn "按参数要求跳过启动/重启服务"
@@ -1576,6 +1788,7 @@ main() {
   deploy_config
   setup_firewall
   restart_service
+  setup_egress_monitor
   write_summary
   show_final_info
   
