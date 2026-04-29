@@ -9,6 +9,9 @@ Automated deployment of a hybrid sing-box proxy server on Debian/Ubuntu. Sets up
 ## Common Commands
 
 ```bash
+# Launch Claude Code with bypassPermissions mode (skip all permission prompts)
+./claude.sh
+
 # Full deployment
 sudo ./install.sh
 
