@@ -306,6 +306,22 @@ validate_config() {
     exit 1
   fi
 
+  # 可选：备用 VPS-J 域名验证
+  HAS_VPS_J=0
+  if [[ -n "${J_TROJAN_DOMAIN:-}" || -n "${J_HYSTERIA_DOMAIN:-}" ]]; then
+    if [[ -z "${J_TROJAN_DOMAIN:-}" || -z "${J_HYSTERIA_DOMAIN:-}" ]]; then
+      log_error "启用 VPS-J 时，必须同时设置 J_TROJAN_DOMAIN 和 J_HYSTERIA_DOMAIN"
+      exit 1
+    fi
+    validate_domain_like "J_TROJAN_DOMAIN" "${J_TROJAN_DOMAIN}"
+    validate_domain_like "J_HYSTERIA_DOMAIN" "${J_HYSTERIA_DOMAIN}"
+    if [[ "${J_TROJAN_DOMAIN}" == "${J_HYSTERIA_DOMAIN}" ]]; then
+      log_error "J_TROJAN_DOMAIN 和 J_HYSTERIA_DOMAIN 不应相同"
+      exit 1
+    fi
+    HAS_VPS_J=1
+  fi
+
   validate_port "TROJAN_PORT" "${TROJAN_PORT}"
   validate_port "HYSTERIA_PORT" "${HYSTERIA_PORT}"
   validate_port "PROXY_PORT" "${PROXY_PORT}"
@@ -335,15 +351,10 @@ validate_config() {
 
   ISP2_TROJAN_PORT="${ISP2_TROJAN_PORT:-$(derive_offset_port ISP2_TROJAN_PORT "${TROJAN_PORT}" 10000)}"
   ISP2_HYSTERIA_PORT="${ISP2_HYSTERIA_PORT:-$(derive_offset_port ISP2_HYSTERIA_PORT "${HYSTERIA_PORT}" 10000)}"
-  VPS_TROJAN_PORT="${VPS_TROJAN_PORT:-$(derive_offset_port VPS_TROJAN_PORT "${TROJAN_PORT}" 20000)}"
-  VPS_HYSTERIA_PORT="${VPS_HYSTERIA_PORT:-$(derive_offset_port VPS_HYSTERIA_PORT "${HYSTERIA_PORT}" 20000)}"
-
   if (( HAS_PROXY2 == 1 )); then
     validate_port "ISP2_TROJAN_PORT" "${ISP2_TROJAN_PORT}"
     validate_port "ISP2_HYSTERIA_PORT" "${ISP2_HYSTERIA_PORT}"
   fi
-  validate_port "VPS_TROJAN_PORT" "${VPS_TROJAN_PORT}"
-  validate_port "VPS_HYSTERIA_PORT" "${VPS_HYSTERIA_PORT}"
 
   validate_positive_int "HYSTERIA_UP_MBPS" "${HYSTERIA_UP_MBPS}"
   validate_positive_int "HYSTERIA_DOWN_MBPS" "${HYSTERIA_DOWN_MBPS}"
@@ -450,8 +461,6 @@ generate_config() {
     --argjson proxy2_port "${PROXY2_PORT:-0}" \
     --argjson isp2_trojan_port "${ISP2_TROJAN_PORT}" \
     --argjson isp2_hysteria_port "${ISP2_HYSTERIA_PORT}" \
-    --argjson vps_trojan_port "${VPS_TROJAN_PORT}" \
-    --argjson vps_hysteria_port "${VPS_HYSTERIA_PORT}" \
     --argjson hy2_up_mbps "${HYSTERIA_UP_MBPS}" \
     --argjson hy2_down_mbps "${HYSTERIA_DOWN_MBPS}" \
     --argjson urltest_tolerance "${URLTEST_TOLERANCE}" \
@@ -543,9 +552,7 @@ generate_config() {
       inbounds: (
         [
           trojan_inbound("trojan-isp1-in"; $trojan_port; "tj-isp1"),
-          hy2_inbound("hy2-isp1-in"; $hysteria_port; "hy2-isp1"),
-          trojan_inbound("trojan-vps-in"; $vps_trojan_port; "tj-vps"),
-          hy2_inbound("hy2-vps-in"; $vps_hysteria_port; "hy2-vps")
+          hy2_inbound("hy2-isp1-in"; $hysteria_port; "hy2-isp1")
         ] + (
           if $has_proxy2 == 1 then
             [
@@ -617,24 +624,6 @@ generate_config() {
             {
               inbound: ["trojan-isp1-in", "hy2-isp1-in"],
               outbound: "isp-out-1"
-            },
-            {
-              inbound: ["trojan-vps-in", "hy2-vps-in"],
-              domain_suffix: [
-                "gemini.google.com",
-                "aistudio.google.com",
-                "ai.google.dev",
-                "generativelanguage.googleapis.com",
-                "proactivebackend-pa.googleapis.com",
-                "alkalimakersuite-pa.clients6.google.com",
-                "makersuite.google.com",
-                "notebooklm.google.com"
-              ],
-              outbound: "ai-out"
-            },
-            {
-              inbound: ["trojan-vps-in", "hy2-vps-in"],
-              outbound: "direct-out"
             }
           ] + (
             if $has_proxy2 == 1 then
@@ -694,8 +683,6 @@ setup_firewall() {
   ufw allow "${SSH_PORT}/tcp" comment 'SSH' >/dev/null || true
   ufw allow "${TROJAN_PORT}/tcp" comment 'sing-box Trojan' >/dev/null || true
   ufw allow "${HYSTERIA_PORT}/udp" comment 'sing-box Hysteria2' >/dev/null || true
-  ufw allow "${VPS_TROJAN_PORT}/tcp" comment 'sing-box Trojan VPS' >/dev/null || true
-  ufw allow "${VPS_HYSTERIA_PORT}/udp" comment 'sing-box Hysteria2 VPS' >/dev/null || true
   if (( HAS_PROXY2 == 1 )); then
     ufw allow "${ISP2_TROJAN_PORT}/tcp" comment 'sing-box Trojan ISP-2' >/dev/null || true
     ufw allow "${ISP2_HYSTERIA_PORT}/udp" comment 'sing-box Hysteria2 ISP-2' >/dev/null || true
@@ -1001,17 +988,14 @@ Hysteria2:
 [服务端出口]
 ISP-1: SOCKS5 (${PROXY_HOST}:${PROXY_PORT})
 ISP-2: ${PROXY2_HOST:-未配置}
-VPS: 服务器直连
-Clash 自动容灾: ISP-1 -> ISP-2 -> VPS
-v2rayN/v2rayNG: 可手动选择 ISP-1 / ISP-2 / VPS 节点
+Clash 自动容灾: ISP-1 -> ISP-2
+v2rayN/v2rayNG: 可手动选择 ISP-1 / ISP-2 节点
 
 [接入端口]
 ISP-1 Trojan: ${TROJAN_PORT}
 ISP-1 Hysteria2: ${HYSTERIA_PORT}
 ISP-2 Trojan: ${ISP2_TROJAN_PORT}
 ISP-2 Hysteria2: ${ISP2_HYSTERIA_PORT}
-VPS Trojan: ${VPS_TROJAN_PORT}
-VPS Hysteria2: ${VPS_HYSTERIA_PORT}
 
 [文件]
 配置文件: ${CONFIG_PATH}
@@ -1039,9 +1023,8 @@ show_final_info() {
   if (( HAS_PROXY2 == 1 )); then
     echo "ISP-2 出口 : ${PROXY2_HOST}:${PROXY2_PORT}"
   fi
-  echo "VPS 出口   : direct-out"
-  echo "Clash 容灾 : ISP-1 -> ISP-2 -> VPS"
-  echo "v2 手选节点: ISP-1 / ISP-2 / VPS"
+  echo "Clash 容灾 : ISP-1 -> ISP-2"
+  echo "v2 手选节点: ISP-1 / ISP-2"
   echo "配置文件   : ${CONFIG_PATH}"
   [[ -n "${BACKUP_CONFIG}" ]] && echo "配置备份   : ${BACKUP_CONFIG}"
   echo "日志命令   : journalctl -u sing-box -f"
@@ -1168,10 +1151,18 @@ export async function onRequest(context) {
     );
   }
 
-  nodes.push(
-    `trojan://TROJAN_PASSWORD_PLACEHOLDER@TROJAN_DOMAIN_PLACEHOLDER:VPS_TROJAN_PORT_PLACEHOLDER?security=tls&sni=TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#VPS-TJ`,
-    `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@HYSTERIA_DOMAIN_PLACEHOLDER:VPS_HYSTERIA_PORT_PLACEHOLDER/?sni=HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#VPS-HY2`,
-  );
+  if (J_ENABLED_PLACEHOLDER) {
+    nodes.push(
+      `trojan://TROJAN_PASSWORD_PLACEHOLDER@J_TROJAN_DOMAIN_PLACEHOLDER:TROJAN_PORT_PLACEHOLDER?security=tls&sni=J_TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#ISP-1-TJ-J`,
+      `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@J_HYSTERIA_DOMAIN_PLACEHOLDER:HYSTERIA_PORT_PLACEHOLDER/?sni=J_HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#ISP-1-HY2-J`,
+    );
+    if (HAS_PROXY2_PLACEHOLDER) {
+      nodes.push(
+        `trojan://TROJAN_PASSWORD_PLACEHOLDER@J_TROJAN_DOMAIN_PLACEHOLDER:ISP2_TROJAN_PORT_PLACEHOLDER?security=tls&sni=J_TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#ISP-2-TJ-J`,
+        `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@J_HYSTERIA_DOMAIN_PLACEHOLDER:ISP2_HYSTERIA_PORT_PLACEHOLDER/?sni=J_HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#ISP-2-HY2-J`,
+      );
+    }
+  }
 
   const uriList = nodes.join('\n');
 
@@ -1212,14 +1203,15 @@ V2JS
   sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${functions_dir}/v2.js"
   sed -i "s|ISP2_TROJAN_PORT_PLACEHOLDER|${ISP2_TROJAN_PORT}|g" "${functions_dir}/v2.js"
   sed -i "s|ISP2_HYSTERIA_PORT_PLACEHOLDER|${ISP2_HYSTERIA_PORT}|g" "${functions_dir}/v2.js"
-  sed -i "s|VPS_TROJAN_PORT_PLACEHOLDER|${VPS_TROJAN_PORT}|g" "${functions_dir}/v2.js"
-  sed -i "s|VPS_HYSTERIA_PORT_PLACEHOLDER|${VPS_HYSTERIA_PORT}|g" "${functions_dir}/v2.js"
   sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${functions_dir}/v2.js"
   sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${functions_dir}/v2.js"
   sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${trojan_password_encoded}|g" "${functions_dir}/v2.js"
   sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${hy2_password_encoded}|g" "${functions_dir}/v2.js"
   sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${obfs_password_encoded}|g" "${functions_dir}/v2.js"
   sed -i "s|HAS_PROXY2_PLACEHOLDER|$([[ ${HAS_PROXY2} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/v2.js"
+  sed -i "s|J_ENABLED_PLACEHOLDER|$([[ ${HAS_VPS_J} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/v2.js"
+  sed -i "s|J_TROJAN_DOMAIN_PLACEHOLDER|${J_TROJAN_DOMAIN:-}|g" "${functions_dir}/v2.js"
+  sed -i "s|J_HYSTERIA_DOMAIN_PLACEHOLDER|${J_HYSTERIA_DOMAIN:-}|g" "${functions_dir}/v2.js"
 
   # 生成 c.js (Clash 订阅) - 完整双层结构配置
   cat > "${functions_dir}/c.js" <<'CJS'
@@ -1229,13 +1221,15 @@ export async function onRequest(context) {
     "ISP-1-TJ",
     "ISP-1-HY2",
     ...(HAS_PROXY2_PLACEHOLDER ? ["ISP-2-TJ", "ISP-2-HY2"] : []),
-    "VPS-TJ",
-    "VPS-HY2",
+    ...(J_ENABLED_PLACEHOLDER ? ["ISP-1-TJ-J", "ISP-1-HY2-J"] : []),
+    ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER ? ["ISP-2-TJ-J", "ISP-2-HY2-J"] : []),
   ];
   const ispOnlyProxyNames = [
     "ISP-1-TJ",
     "ISP-1-HY2",
     ...(HAS_PROXY2_PLACEHOLDER ? ["ISP-2-TJ", "ISP-2-HY2"] : []),
+    ...(J_ENABLED_PLACEHOLDER ? ["ISP-1-TJ-J", "ISP-1-HY2-J"] : []),
+    ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER ? ["ISP-2-TJ-J", "ISP-2-HY2-J"] : []),
   ];
 
   const proxies = [
@@ -1291,30 +1285,62 @@ export async function onRequest(context) {
     down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
         ]
       : []),
-    `  - name: "VPS-TJ"
+    ...(J_ENABLED_PLACEHOLDER
+      ? [
+          `  - name: "ISP-1-TJ-J"
     type: trojan
-    server: TROJAN_DOMAIN_PLACEHOLDER
-    port: VPS_TROJAN_PORT_PLACEHOLDER
+    server: J_TROJAN_DOMAIN_PLACEHOLDER
+    port: TROJAN_PORT_PLACEHOLDER
     password: "TROJAN_PASSWORD_PLACEHOLDER"
     udp: true
-    sni: TROJAN_DOMAIN_PLACEHOLDER
+    sni: J_TROJAN_DOMAIN_PLACEHOLDER
     alpn:
       - h2
       - http/1.1
     skip-cert-verify: false`,
-    `  - name: "VPS-HY2"
+          `  - name: "ISP-1-HY2-J"
     type: hysteria2
-    server: HYSTERIA_DOMAIN_PLACEHOLDER
-    port: VPS_HYSTERIA_PORT_PLACEHOLDER
+    server: J_HYSTERIA_DOMAIN_PLACEHOLDER
+    port: HYSTERIA_PORT_PLACEHOLDER
     password: "HYSTERIA_PASSWORD_PLACEHOLDER"
     obfs: salamander
     obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
     alpn:
       - h3
-    sni: HYSTERIA_DOMAIN_PLACEHOLDER
+    sni: J_HYSTERIA_DOMAIN_PLACEHOLDER
     skip-cert-verify: false
     up: "HYSTERIA_UP_PLACEHOLDER Mbps"
     down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
+        ]
+      : []),
+    ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER
+      ? [
+          `  - name: "ISP-2-TJ-J"
+    type: trojan
+    server: J_TROJAN_DOMAIN_PLACEHOLDER
+    port: ISP2_TROJAN_PORT_PLACEHOLDER
+    password: "TROJAN_PASSWORD_PLACEHOLDER"
+    udp: true
+    sni: J_TROJAN_DOMAIN_PLACEHOLDER
+    alpn:
+      - h2
+      - http/1.1
+    skip-cert-verify: false`,
+          `  - name: "ISP-2-HY2-J"
+    type: hysteria2
+    server: J_HYSTERIA_DOMAIN_PLACEHOLDER
+    port: ISP2_HYSTERIA_PORT_PLACEHOLDER
+    password: "HYSTERIA_PASSWORD_PLACEHOLDER"
+    obfs: salamander
+    obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
+    alpn:
+      - h3
+    sni: J_HYSTERIA_DOMAIN_PLACEHOLDER
+    skip-cert-verify: false
+    up: "HYSTERIA_UP_PLACEHOLDER Mbps"
+    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
+        ]
+      : []),
   ];
 
   const proxyGroupLines = proxyNames.map((name) => `      - "${name}"`).join('\n');
@@ -1750,14 +1776,15 @@ CJS
   sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${functions_dir}/c.js"
   sed -i "s|ISP2_TROJAN_PORT_PLACEHOLDER|${ISP2_TROJAN_PORT}|g" "${functions_dir}/c.js"
   sed -i "s|ISP2_HYSTERIA_PORT_PLACEHOLDER|${ISP2_HYSTERIA_PORT}|g" "${functions_dir}/c.js"
-  sed -i "s|VPS_TROJAN_PORT_PLACEHOLDER|${VPS_TROJAN_PORT}|g" "${functions_dir}/c.js"
-  sed -i "s|VPS_HYSTERIA_PORT_PLACEHOLDER|${VPS_HYSTERIA_PORT}|g" "${functions_dir}/c.js"
   sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${functions_dir}/c.js"
   sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${TROJAN_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${HYSTERIA_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${HYSTERIA_OBFS_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|HAS_PROXY2_PLACEHOLDER|$([[ ${HAS_PROXY2} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/c.js"
+  sed -i "s|J_ENABLED_PLACEHOLDER|$([[ ${HAS_VPS_J} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/c.js"
+  sed -i "s|J_TROJAN_DOMAIN_PLACEHOLDER|${J_TROJAN_DOMAIN:-}|g" "${functions_dir}/c.js"
+  sed -i "s|J_HYSTERIA_DOMAIN_PLACEHOLDER|${J_HYSTERIA_DOMAIN:-}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${functions_dir}/c.js"
   

@@ -34,3 +34,4 @@ node_modules/
 # ── Claude Code 本地配置 ─────────────────────────────────
 .claude/
 .codex
+cloudflare-pages-sub/manifest.json
