@@ -1,0 +1,11 @@
+# Cloudflare Pages 重定向规则
+# 格式: <source> <destination> [status]
+
+# 隐藏订阅路径 - 外部 providers 使用
+/FySfhdVmEYSrvskg/nodes /nodes.yaml 200
+
+# v2rayN 订阅接口
+/v /v 200
+
+# Clash 订阅接口
+/c /c 200
