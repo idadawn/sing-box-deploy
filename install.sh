@@ -1543,10 +1543,12 @@ ${fallbackProxyLines}
 rules:
   # --- 基础直连 / 私网 ---
   - GEOSITE,private,🎯 全球直连
+  # 0.0.0.0/8 保留地址（含 0.1.0.1 Windows NCSI/微软服务探测）必须 REJECT，
+  # 若走 DIRECT 会导致微软服务判定网络异常，无法登录
+  - IP-CIDR,0.0.0.0/8,REJECT,no-resolve
   - GEOIP,private,🎯 全球直连,no-resolve
   - DOMAIN-SUFFIX,lan,🎯 全球直连
   - DOMAIN-SUFFIX,internal,🎯 全球直连
-  - IP-CIDR,0.0.0.0/8,🎯 全球直连,no-resolve
   - IP-CIDR,10.0.0.0/8,🎯 全球直连,no-resolve
   - IP-CIDR,100.64.0.0/10,🎯 全球直连,no-resolve
   - IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve
@@ -1650,6 +1652,12 @@ rules:
   - DOMAIN-SUFFIX,discordapp.com,🐙 开发平台
   - DOMAIN-SUFFIX,discordapp.net,🐙 开发平台
 
+  # --- OneDrive / 微软服务登录（国内无法直连，强制代理）---
+  - DOMAIN-SUFFIX,onedrive.live.com,🚀 节点选择
+  - DOMAIN-SUFFIX,login.live.com,🚀 节点选择
+  - DOMAIN-SUFFIX,login.microsoftonline.com,🚀 节点选择
+  - DOMAIN-SUFFIX,microsoftonline.com,🚀 节点选择
+
   # --- Microsoft / OneDrive ---
   - GEOSITE,microsoft@cn,🎯 全球直连
   - GEOSITE,onedrive,Ⓜ️ 微软服务
@@ -1730,6 +1738,10 @@ rules:
   - DOMAIN-SUFFIX,wikimedia.org,🚀 节点选择
   - DOMAIN-SUFFIX,terabox.com,🚀 节点选择
   - DOMAIN-SUFFIX,teraboxcdn.com,🚀 节点选择
+
+  # --- 腾讯云 OrcaTerm ---
+  - DOMAIN-SUFFIX,orcaterm.tencentcloud.com,🎯 全球直连
+  - DOMAIN-SUFFIX,orcaterm.cloud.tencent.com,🎯 全球直连
 
   # --- 中国直连 ---
   - GEOSITE,cn,🎯 全球直连
