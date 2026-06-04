@@ -1660,6 +1660,7 @@ rules:
   - DOMAIN-SUFFIX,login.live.com,🚀 节点选择
   - DOMAIN-SUFFIX,login.microsoftonline.com,🚀 节点选择
   - DOMAIN-SUFFIX,microsoftonline.com,🚀 节点选择
+  - DOMAIN-SUFFIX,go.microsoft.com,🚀 节点选择
 
   # --- Microsoft / OneDrive ---
   - GEOSITE,microsoft@cn,🎯 全球直连
