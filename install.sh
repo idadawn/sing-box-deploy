@@ -1377,6 +1377,7 @@ sniffer:
   skip-domain:
     - "Mijia Cloud"
     - "+.push.apple.com"
+    - "+.icloud.com"
 
 dns:
   enable: true
@@ -1390,6 +1391,8 @@ dns:
     - "+.lan"
     - "+.local"
     - "+.market.xiaomi.com"
+    - "+.icloud.com"
+    - "+.icloud-content.com"
     - "TROJAN_DOMAIN_PLACEHOLDER"
     - "HYSTERIA_DOMAIN_PLACEHOLDER"
   default-nameserver:
