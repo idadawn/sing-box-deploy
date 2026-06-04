@@ -1667,6 +1667,8 @@ rules:
   - GEOSITE,microsoft,Ⓜ️ 微软服务
 
   # --- Apple ---
+  - DOMAIN-SUFFIX,appleid.apple.com,🚀 节点选择
+  - DOMAIN-SUFFIX,idmsa.apple.com,🚀 节点选择
   - DOMAIN-SUFFIX,tv.apple.com,🌍 国外媒体
   - GEOSITE,apple-cn,🎯 全球直连
   - GEOSITE,apple,🍎 苹果服务
