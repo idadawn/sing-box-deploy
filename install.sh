@@ -1743,6 +1743,10 @@ rules:
   - DOMAIN-SUFFIX,orcaterm.tencentcloud.com,🎯 全球直连
   - DOMAIN-SUFFIX,orcaterm.cloud.tencent.com,🎯 全球直连
 
+  # --- 酷狗音乐 ---
+  - DOMAIN-SUFFIX,kugou.com,🎯 全球直连
+  - DOMAIN-SUFFIX,kugou.net,🎯 全球直连
+
   # --- 中国直连 ---
   - GEOSITE,cn,🎯 全球直连
   - GEOIP,CN,🎯 全球直连,no-resolve
