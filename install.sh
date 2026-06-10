@@ -1543,6 +1543,10 @@ ${ispOnlyProxyGroupLines}
 ${fallbackProxyLines}
 
 rules:
+    # 本地/公司内网优先直连：避免浏览器系统代理把网关管理地址送入代理节点
+    - 'IP-CIDR,192.168.1.0/24,DIRECT,no-resolve'
+    - 'IP-CIDR,10.78.1.0/24,DIRECT,no-resolve'
+
     # AI 高风险账号服务优先匹配：必须走 ISP-only 出口，避免被通用代理/外挂规则抢先命中
     - 'DOMAIN-SUFFIX,openai.com,🤖 AI 服务'
     - 'DOMAIN,api.openai.com,🤖 AI 服务'
