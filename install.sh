@@ -306,11 +306,11 @@ validate_config() {
     exit 1
   fi
 
-  # 可选：备用 VPS-J 域名验证
+  # 可选：备用 J 中继服务器域名验证
   HAS_VPS_J=0
   if [[ -n "${J_TROJAN_DOMAIN:-}" || -n "${J_HYSTERIA_DOMAIN:-}" ]]; then
     if [[ -z "${J_TROJAN_DOMAIN:-}" || -z "${J_HYSTERIA_DOMAIN:-}" ]]; then
-      log_error "启用 VPS-J 时，必须同时设置 J_TROJAN_DOMAIN 和 J_HYSTERIA_DOMAIN"
+      log_error "启用 J 中继服务器时，必须同时设置 J_TROJAN_DOMAIN 和 J_HYSTERIA_DOMAIN"
       exit 1
     fi
     validate_domain_like "J_TROJAN_DOMAIN" "${J_TROJAN_DOMAIN}"
@@ -793,14 +793,14 @@ retry_command() {
 build_subject() {
   if (( ${#problems[@]} == 1 )); then
     case "${problems[0]}" in
-      "VPS 直连出口访问异常") printf '%s' "VPS异常-直连出口" ;;
-      "ISP-1 SOCKS5 出口访问异常") printf '%s' "VPS异常-ISP-1出口" ;;
-      "ISP-2 SOCKS5 出口访问异常") printf '%s' "VPS异常-ISP-2出口" ;;
-      "sing-box 服务未运行") printf '%s' "VPS异常-服务状态" ;;
-      *) printf '%s' "VPS异常-出口状态" ;;
+      "中继服务器公网出口访问异常") printf '%s' "中继异常-公网出口" ;;
+      "ISP-1 SOCKS5 出口访问异常") printf '%s' "中继异常-ISP-1出口" ;;
+      "ISP-2 SOCKS5 出口访问异常") printf '%s' "中继异常-ISP-2出口" ;;
+      "sing-box 服务未运行") printf '%s' "中继异常-服务状态" ;;
+      *) printf '%s' "中继异常-出口状态" ;;
     esac
   else
-    printf '%s' "VPS异常-多项异常"
+    printf '%s' "中继异常-多项异常"
   fi
 }
 
@@ -849,9 +849,9 @@ main() {
   fi
 
   if retry_command probe_http_once "${check_url}"; then
-    summary+=("VPS 直连出口正常")
+    summary+=("中继服务器公网出口正常")
   else
-    problems+=("VPS 直连出口访问异常")
+    problems+=("中继服务器公网出口访问异常")
   fi
 
   if retry_command probe_socks5_once "${PROXY_HOST}" "${PROXY_PORT}" "${PROXY_USER}" "${PROXY_PASS}" "${check_url}"; then
@@ -1348,7 +1348,7 @@ export async function onRequest(context) {
 allow-lan: false
 mode: rule
 log-level: warning
-ipv6: true
+ipv6: false
 unified-delay: true
 tcp-concurrent: true
 global-client-fingerprint: chrome
@@ -1377,7 +1377,7 @@ sniffer:
 
 dns:
   enable: true
-  ipv6: true
+  ipv6: false
   enhanced-mode: fake-ip
   cache-algorithm: arc
   use-hosts: true
@@ -1389,6 +1389,9 @@ dns:
     - "+.market.xiaomi.com"
     - "+.icloud.com"
     - "+.icloud-content.com"
+    - "+.push.apple.com"
+    - "api.push.apple.com"
+    - "courier.push.apple.com"
     - "TROJAN_DOMAIN_PLACEHOLDER"
     - "HYSTERIA_DOMAIN_PLACEHOLDER"
   default-nameserver:
@@ -1438,9 +1441,16 @@ ${selectProxyLines}
   - name: "🤖 AI 服务"
     type: select
     proxies:
-      - "🚀 节点选择"
-      - "♻️ 自动选择"
-      - "🛡️ 自动容灾"
+      - "🤖 AI 自动"
+${ispOnlyProxyGroupLines}
+
+  - name: "🤖 AI 自动"
+    type: fallback
+    proxies:
+${ispOnlyProxyGroupLines}
+    url: "https://chat.openai.com/cdn-cgi/trace"
+    interval: 300
+    timeout: 5000
 
   - name: "🪐 Gemini 服务"
     type: select
@@ -1478,6 +1488,13 @@ ${ispOnlyProxyGroupLines}
       - "🛡️ 自动容灾"
 
   - name: "🍎 苹果服务"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+
+  - name: "📩 Apple Push"
     type: select
     proxies:
       - "🚀 节点选择"
@@ -1526,12 +1543,12 @@ ${ispOnlyProxyGroupLines}
 ${fallbackProxyLines}
 
 rules:
-    - 'DOMAIN,gemini.google.com,🚀 节点选择'
-    - 'DOMAIN,ai.google.com,🚀 节点选择'
-    - 'DOMAIN,aistudio.google.com,🚀 节点选择'
-    - 'DOMAIN,proactivebackend-pa.googleapis.com,🚀 节点选择'
-    - 'DOMAIN,alkalimakersuite-pa.clients6.google.com,🚀 节点选择'
-    - 'DOMAIN,generativelanguage.googleapis.com,🚀 节点选择'
+    - 'DOMAIN,gemini.google.com,🪐 Gemini 服务'
+    - 'DOMAIN,ai.google.com,🪐 Gemini 服务'
+    - 'DOMAIN,aistudio.google.com,🪐 Gemini 服务'
+    - 'DOMAIN,proactivebackend-pa.googleapis.com,🪐 Gemini 服务'
+    - 'DOMAIN,alkalimakersuite-pa.clients6.google.com,🪐 Gemini 服务'
+    - 'DOMAIN,generativelanguage.googleapis.com,🪐 Gemini 服务'
     - 'DOMAIN-SUFFIX,gstatic.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,googleapis.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,fonts.googleapis.com,🚀 节点选择'
@@ -1539,8 +1556,8 @@ rules:
     - 'DOMAIN,www.googletagmanager.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,googletagmanager.com,🚀 节点选择'
     - 'DOMAIN,www.googleadservices.com,🚀 节点选择'
-    - 'DOMAIN,claude.ai,🚀 节点选择'
-    - 'DOMAIN,anthropic.com,🚀 节点选择'
+    - 'DOMAIN,claude.ai,🤖 AI 服务'
+    - 'DOMAIN,anthropic.com,🤖 AI 服务'
     - 'DOMAIN-SUFFIX,acl4ssr,🎯 全球直连'
     - 'DOMAIN-SUFFIX,ip6-localhost,🎯 全球直连'
     - 'DOMAIN-SUFFIX,ip6-loopback,🎯 全球直连'
@@ -3268,6 +3285,16 @@ rules:
     - 'DOMAIN-SUFFIX,update.googleapis.com,🎯 全球直连'
     - 'DOMAIN-SUFFIX,www-googletagmanager.l.google.com,🎯 全球直连'
     - 'DOMAIN-SUFFIX,www.gstatic.com,🚀 节点选择'
+    # Apple Push / APNs：优先于微软与苹果通用规则，避免 iOS / Telegram 推送被错误直连或落入大范围 Apple 策略。
+    - 'DOMAIN-SUFFIX,push.apple.com,📩 Apple Push'
+    - 'DOMAIN-SUFFIX,api.push.apple.com,📩 Apple Push'
+    - 'DOMAIN-SUFFIX,courier.push.apple.com,📩 Apple Push'
+    - 'DOMAIN-SUFFIX,akadns.net,📩 Apple Push'
+    - 'DOMAIN-KEYWORD,apple.com.edgekey.net,📩 Apple Push'
+    # iCloud 国际版走代理；中国大陆 iCloud 使用 icloud.com.cn 保持直连。
+    - 'DOMAIN-SUFFIX,icloud.com.cn,🎯 全球直连'
+    - 'DOMAIN-SUFFIX,icloud.com,🍎 苹果服务'
+    - 'DOMAIN-SUFFIX,icloud-content.com,🍎 苹果服务'
     - 'DOMAIN-KEYWORD,1drv,Ⓜ️ 微软服务'
     - 'DOMAIN-KEYWORD,microsoft,Ⓜ️ 微软服务'
     - 'DOMAIN-SUFFIX,aadrm.com,Ⓜ️ 微软服务'
@@ -3345,7 +3372,6 @@ rules:
     - 'DOMAIN-SUFFIX,yammerusercontent.com,Ⓜ️ 微软服务'
     - 'DOMAIN,apple.comscoreresearch.com,🍎 苹果服务'
     - 'DOMAIN-SUFFIX,aaplimg.com,🍎 苹果服务'
-    - 'DOMAIN-SUFFIX,akadns.net,🍎 苹果服务'
     - 'DOMAIN-SUFFIX,apple-cloudkit.com,🍎 苹果服务'
     - 'DOMAIN-SUFFIX,apple.co,🍎 苹果服务'
     - 'DOMAIN-SUFFIX,apple.com,🍎 苹果服务'
@@ -3617,37 +3643,36 @@ rules:
     - 'IP-CIDR6,2001:67c:4e8::/48,📲 电报信息,no-resolve'
     - 'IP-CIDR6,2001:b28:f23d::/48,📲 电报信息,no-resolve'
     - 'IP-CIDR6,2001:b28:f23f::/48,📲 电报信息,no-resolve'
-    - 'DOMAIN-SUFFIX,openai.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,pay.openai.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,chat.openai.com,🚀 节点选择'
+    - 'DOMAIN-SUFFIX,openai.com,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,pay.openai.com,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,chat.openai.com,🤖 AI 服务'
     - 'DOMAIN-SUFFIX,challenges.cloudflare.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,auth0.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,auth0.openai.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,platform.openai.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,chatgpt.com,🚀 节点选择'
+    - 'DOMAIN-SUFFIX,auth0.openai.com,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,platform.openai.com,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,chatgpt.com,🤖 AI 服务'
     - 'DOMAIN-SUFFIX,hcaptcha.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,recaptcha.net,🚀 节点选择'
     - 'DOMAIN-SUFFIX,sfx.ms,🚀 节点选择'
     - 'DOMAIN-SUFFIX,microsoft.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,oaistatic.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,oaiusercontent.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,ai.com,🚀 节点选择'
+    - 'DOMAIN-SUFFIX,oaistatic.com,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,oaiusercontent.com,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,ai.com,🤖 AI 服务'
     - 'DOMAIN-SUFFIX,invoice.stripe.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,stripe.com,🚀 节点选择'
     - 'DOMAIN,bard.google.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,bing.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,sentry.io,🚀 节点选择'
     - 'DOMAIN-SUFFIX,identrust.com,🚀 节点选择'
-    - 'DOMAIN,openaiapi-site.azureedge.net,🚀 节点选择'
+    - 'DOMAIN,openaiapi-site.azureedge.net,🤖 AI 服务'
     - 'DOMAIN-SUFFIX,poe.com,🚀 节点选择'
-    - 'DOMAIN,servd-anthropic-website.b-cdn.net,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,anthropic.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,claude.ai,🚀 节点选择'
+    - 'DOMAIN,servd-anthropic-website.b-cdn.net,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,anthropic.com,🤖 AI 服务'
+    - 'DOMAIN-SUFFIX,claude.ai,🤖 AI 服务'
     - 'DOMAIN-SUFFIX,licdn.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,linkedin.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,openai.com,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,services.googleapis.cn,🚀 节点选择'
-    - 'DOMAIN-SUFFIX,xn--ngstr-lra8j.com,🚀 节点选择'
+    - 'DOMAIN-SUFFIX,services.googleapis.cn,🪐 Gemini 服务'
+    - 'DOMAIN-SUFFIX,xn--ngstr-lra8j.com,🪐 Gemini 服务'
     - 'DOMAIN-SUFFIX,1password.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,bit.no.com,🚀 节点选择'
     - 'DOMAIN-SUFFIX,btlibrary.me,🚀 节点选择'

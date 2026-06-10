@@ -66,7 +66,7 @@ SMTP_TO=
 PUSHPLUS_TOKEN=
 
 # ----------------------------------------------------------
-# 备用 VPS-J 配置（J机填T机的域名，实现双向备份）
+# 备用 T 中继服务器配置（J 机填 T 机的域名，实现双向接入备份）
 # ----------------------------------------------------------
 J_TROJAN_DOMAIN=trojan.yourdomain.com
 J_HYSTERIA_DOMAIN=hy2.yourdomain.com

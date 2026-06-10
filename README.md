@@ -1,28 +1,29 @@
 # sing-box 自动化部署方案
 
-Debian / Ubuntu 一键部署 **Trojan + Hysteria2** 代理服务器，支持 `ISP-1`、可选 `ISP-2` 和 `VPS` 三类出口节点。Clash 订阅内置 `ISP-1 -> ISP-2 -> VPS` 自动容灾，v2rayN / v2rayNG 订阅同时提供 `ISP-1 / ISP-2 / VPS` 手动节点。订阅配置托管在 Cloudflare Pages。
+Debian / Ubuntu 一键部署 **Trojan + Hysteria2** 中继服务器。项目支持 `T` 与可选 `J` 两台海外服务器作为接入中继层，真正上网出口由 `ISP-1` 与可选 `ISP-2` SOCKS5 住宅/ISP 出口承担。Clash 订阅内置 T/J 接入容灾与 ISP 出口容灾，订阅配置托管在 Cloudflare Pages。
 
 ## 架构概览
 
 ```
 客户端 (v2rayN / Clash)
     │
-    ├── ISP-1 / ISP-2 / VPS 手动节点
-    └── Clash 自动容灾组：ISP-1 -> ISP-2 -> VPS
+    ├── T-ISP1 / T-ISP2 节点
+    ├── J-ISP1 / J-ISP2 节点（可选，接入容灾）
+    └── Clash 自动容灾组：T/J 中继 -> ISP-1/ISP-2 出口
               │
-         sing-box 服务端
+       T / J sing-box 中继服务器
               │
-    ┌─────────┬─────────┬─────────┐
-    │         │         │
- ISP-1     ISP-2      VPS
- SOCKS5    SOCKS5     直连
+        ┌─────┴─────┐
+        │           │
+     ISP-1       ISP-2（可选）
+     SOCKS5      SOCKS5
 ```
 
 ## 前置要求
 
 - Debian 10+ 或 Ubuntu 20.04+，root 权限
 - 已购买 ISP SOCKS5 代理（如 1024proxy）
-- Cloudflare 托管的域名，两条 A 记录（DNS Only 灰云）
+- Cloudflare 托管的域名，T 机至少两条 A 记录；如启用 J 机，再额外准备两条 J 机 A 记录（均为 DNS Only 灰云）
 - Cloudflare API Token（Zone:DNS:Edit 权限）
 
 ## 快速开始
@@ -50,7 +51,8 @@ nano .env   # 填写所有必填项
 | `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
 | `CF_API_TOKEN` + `CF_ACCOUNT_ID` | Cloudflare Pages 部署凭据 |
 | `SUB_DOMAIN` | 订阅托管域名 |
-| `SMTP_ALERT_ENABLED` + `SMTP_*` | 可选，开启 ISP/VPS 出口异常邮件告警 |
+| `SMTP_ALERT_ENABLED` + `SMTP_*` | 可选，开启中继服务与 ISP 出口异常邮件告警 |
+| `J_TROJAN_DOMAIN/J_HYSTERIA_DOMAIN` | 可选，J 中继服务器入口域名；用于客户端接入容灾，不代表额外上网出口 |
 
 ### 2. 部署
 
@@ -75,9 +77,10 @@ sudo ./install.sh
 | v2rayN | `https://<SUB_DOMAIN>/v2` |
 | Clash  | `https://<SUB_DOMAIN>/c`  |
 
-- `Clash` 订阅内置自动容灾组，顺序为 `ISP-1 -> ISP-2 -> VPS`
-- `v2rayN / v2rayNG` 订阅直接下发 `ISP-1-TJ`、`ISP-1-HY2`、`ISP-2-*`、`VPS-*` 节点，按需手动选择
-- 服务端额外处理 `VPS` 节点访问 `Gemini / Google AI` 的流量：命中相关规则集后自动改走 ISP 出口
+- `Clash` 订阅内置自动容灾组，默认在 `T-ISP1/T-ISP2` 与可选 `J-ISP1/J-ISP2` 中继节点之间自动切换
+- `v2rayN / v2rayNG` 订阅直接下发 `T-ISP1-*`、`T-ISP2-*`、可选 `J-ISP1-*`、`J-ISP2-*` 节点，按需手动选择
+- `T/J` 服务器只作为接入中继层；OpenAI、Claude、Gemini 等 AI 服务在 Clash 订阅中默认使用 ISP-only 专用策略组，避免误选 `DIRECT` 或把 T/J 公网 IP 当作最终出口
+- Clash 订阅默认关闭 IPv6，并内置 Apple Push / iCloud 国际版分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
 
 ### 4. 管理
 
@@ -137,7 +140,7 @@ sing-box-deploy/
 
 - `TROJAN_DOMAIN` 和 `HYSTERIA_DOMAIN` 必须是 **DNS Only（灰云）**
 - 不能开启 Cloudflare 代理（橙云），否则 TLS 握手会失败
-- A 记录指向 VPS 的公网 IP
+- A 记录分别指向 T/J 中继服务器的公网 IP；T/J 不作为最终上网出口，最终出口由 ISP SOCKS5 决定
 
 ## 证书说明
 
@@ -167,9 +170,9 @@ ss -tulnp | grep -E ':443|:8443'
 
 本方案在实际使用中采用了以下服务商（供参考，非强制要求）：
 
-### VPS 提供商：极络云
+### 中继服务器提供商：极络云
 
-本项目实际部署使用的 VPS 服务商。极络云提供性价比高的 CN2 GIA 线路，适合搭建代理服务器。
+本项目实际部署使用的海外中继服务器服务商。中继服务器主要用于承载 Trojan / Hysteria2 入站与转发流量，不建议作为 OpenAI / Claude 等高风控服务的最终出口。
 
 - 官网: https://www.jiluoyun.com/whmcs
 - 推广链接: https://www.jiluoyun.com/whmcs/aff.php?aff=24 （支持本项目可使用此链接注册）
