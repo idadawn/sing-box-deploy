@@ -1495,6 +1495,14 @@ ${ispOnlyProxyGroupLines}
       - "🚀 节点选择"
       - DIRECT
 
+  - name: "🔎 IP 信息"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - DIRECT
+
   - name: "🍎 苹果服务"
     type: select
     proxies:
@@ -1560,6 +1568,17 @@ rules:
     # 本地/公司内网优先直连：避免浏览器系统代理把网关管理地址送入代理节点
     - 'IP-CIDR,192.168.1.0/24,DIRECT,no-resolve'
     - 'IP-CIDR,10.78.1.0/24,DIRECT,no-resolve'
+
+    # Clash Verge Rev IP 信息查询优先走独立策略组：避免检测服务落入不稳定节点导致首页一直显示骨架屏
+    - 'DOMAIN,api.ip.sb,🔎 IP 信息'
+    - 'DOMAIN,api.ipapi.is,🔎 IP 信息'
+    - 'DOMAIN,ip.api.skk.moe,🔎 IP 信息'
+    - 'DOMAIN,get.geojs.io,🔎 IP 信息'
+    - 'DOMAIN-SUFFIX,ip.sb,🔎 IP 信息'
+    - 'DOMAIN-SUFFIX,ipapi.co,🔎 IP 信息'
+    - 'DOMAIN-SUFFIX,ipapi.is,🔎 IP 信息'
+    - 'DOMAIN-SUFFIX,ipwho.is,🔎 IP 信息'
+    - 'DOMAIN-SUFFIX,geojs.io,🔎 IP 信息'
 
     # OneDrive/SharePoint 高频连接优先走独立加速组：绕开微软服务大策略组，同时避免直连跨境 CDN 过慢
     - 'DOMAIN-KEYWORD,1drv,☁️ OneDrive 加速'
