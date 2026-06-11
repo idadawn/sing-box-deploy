@@ -1553,6 +1553,23 @@ rules:
     - 'IP-CIDR,192.168.1.0/24,DIRECT,no-resolve'
     - 'IP-CIDR,10.78.1.0/24,DIRECT,no-resolve'
 
+    # OneDrive/SharePoint 高频连接优先直连：避免被微软服务策略组死节点或大量连接选择代理拖死 Clash Verge
+    - 'DOMAIN-KEYWORD,1drv,DIRECT'
+    - 'DOMAIN-KEYWORD,onedrive,DIRECT'
+    - 'DOMAIN-KEYWORD,skydrive,DIRECT'
+    - 'DOMAIN-SUFFIX,1drv.ms,DIRECT'
+    - 'DOMAIN-SUFFIX,livefilestore.com,DIRECT'
+    - 'DOMAIN-SUFFIX,oneclient.sfx.ms,DIRECT'
+    - 'DOMAIN-SUFFIX,onedrive.com,DIRECT'
+    - 'DOMAIN-SUFFIX,onedrive.live.com,DIRECT'
+    - 'DOMAIN-SUFFIX,photos.live.com,DIRECT'
+    - 'DOMAIN-SUFFIX,sharepoint.com,DIRECT'
+    - 'DOMAIN-SUFFIX,sharepointonline.com,DIRECT'
+    - 'DOMAIN-SUFFIX,skydrive.wns.windows.com,DIRECT'
+    - 'DOMAIN-SUFFIX,spoprod-a.akamaihd.net,DIRECT'
+    - 'DOMAIN-SUFFIX,storage.live.com,DIRECT'
+    - 'DOMAIN-SUFFIX,storage.msn.com,DIRECT'
+
     # AI 高风险账号服务优先匹配：必须走 ISP-only 出口，避免被通用代理/外挂规则抢先命中
     - 'DOMAIN-SUFFIX,openai.com,🤖 AI 服务'
     - 'DOMAIN,api.openai.com,🤖 AI 服务'
