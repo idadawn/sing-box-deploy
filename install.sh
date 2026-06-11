@@ -1469,9 +1469,9 @@ ${ispOnlyProxyGroupLines}
   - name: "🌍 国外媒体"
     type: select
     proxies:
-      - "🚀 节点选择"
       - "♻️ 自动选择"
       - "🛡️ 自动容灾"
+      - "🚀 节点选择"
 
   - name: "📲 电报信息"
     type: select
@@ -1486,6 +1486,14 @@ ${ispOnlyProxyGroupLines}
       - "🚀 节点选择"
       - "♻️ 自动选择"
       - "🛡️ 自动容灾"
+
+  - name: "☁️ OneDrive 加速"
+    type: select
+    proxies:
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+      - "🚀 节点选择"
+      - DIRECT
 
   - name: "🍎 苹果服务"
     type: select
@@ -1553,22 +1561,22 @@ rules:
     - 'IP-CIDR,192.168.1.0/24,DIRECT,no-resolve'
     - 'IP-CIDR,10.78.1.0/24,DIRECT,no-resolve'
 
-    # OneDrive/SharePoint 高频连接优先直连：避免被微软服务策略组死节点或大量连接选择代理拖死 Clash Verge
-    - 'DOMAIN-KEYWORD,1drv,DIRECT'
-    - 'DOMAIN-KEYWORD,onedrive,DIRECT'
-    - 'DOMAIN-KEYWORD,skydrive,DIRECT'
-    - 'DOMAIN-SUFFIX,1drv.ms,DIRECT'
-    - 'DOMAIN-SUFFIX,livefilestore.com,DIRECT'
-    - 'DOMAIN-SUFFIX,oneclient.sfx.ms,DIRECT'
-    - 'DOMAIN-SUFFIX,onedrive.com,DIRECT'
-    - 'DOMAIN-SUFFIX,onedrive.live.com,DIRECT'
-    - 'DOMAIN-SUFFIX,photos.live.com,DIRECT'
-    - 'DOMAIN-SUFFIX,sharepoint.com,DIRECT'
-    - 'DOMAIN-SUFFIX,sharepointonline.com,DIRECT'
-    - 'DOMAIN-SUFFIX,skydrive.wns.windows.com,DIRECT'
-    - 'DOMAIN-SUFFIX,spoprod-a.akamaihd.net,DIRECT'
-    - 'DOMAIN-SUFFIX,storage.live.com,DIRECT'
-    - 'DOMAIN-SUFFIX,storage.msn.com,DIRECT'
+    # OneDrive/SharePoint 高频连接优先走独立加速组：绕开微软服务大策略组，同时避免直连跨境 CDN 过慢
+    - 'DOMAIN-KEYWORD,1drv,☁️ OneDrive 加速'
+    - 'DOMAIN-KEYWORD,onedrive,☁️ OneDrive 加速'
+    - 'DOMAIN-KEYWORD,skydrive,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,1drv.ms,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,livefilestore.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,oneclient.sfx.ms,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,onedrive.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,onedrive.live.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,photos.live.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,sharepoint.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,sharepointonline.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,skydrive.wns.windows.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,spoprod-a.akamaihd.net,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,storage.live.com,☁️ OneDrive 加速'
+    - 'DOMAIN-SUFFIX,storage.msn.com,☁️ OneDrive 加速'
 
     # AI 高风险账号服务优先匹配：必须走 ISP-only 出口，避免被通用代理/外挂规则抢先命中
     - 'DOMAIN-SUFFIX,openai.com,🤖 AI 服务'
