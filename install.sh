@@ -1543,6 +1543,12 @@ ${ispOnlyProxyGroupLines}
 ${fallbackProxyLines}
 
 rules:
+    # Apple NTP 优先直连：避免 UDP/123 时间同步请求被代理策略截走导致解析或连接超时
+    - 'DOMAIN,time.apple.com,DIRECT'
+
+    # OpenAI 静态 CDN 优先走普通高速代理：避免文档视频等大文件占用账号安全出口
+    - 'DOMAIN,cdn.openai.com,🚀 节点选择'
+
     # 本地/公司内网优先直连：避免浏览器系统代理把网关管理地址送入代理节点
     - 'IP-CIDR,192.168.1.0/24,DIRECT,no-resolve'
     - 'IP-CIDR,10.78.1.0/24,DIRECT,no-resolve'
