@@ -1503,6 +1503,14 @@ ${ispOnlyProxyGroupLines}
       - "🛡️ 自动容灾"
       - DIRECT
 
+  - name: "🧬 AdsPower"
+    type: select
+    proxies:
+      - DIRECT
+      - "🚀 节点选择"
+      - "♻️ 自动选择"
+      - "🛡️ 自动容灾"
+
   - name: "🍎 苹果服务"
     type: select
     proxies:
@@ -1568,6 +1576,10 @@ rules:
     # 本地/公司内网优先直连：避免浏览器系统代理把网关管理地址送入代理节点
     - 'IP-CIDR,192.168.1.0/24,DIRECT,no-resolve'
     - 'IP-CIDR,10.78.1.0/24,DIRECT,no-resolve'
+
+    # AdsPower 客户端服务优先走独立策略组：避免登录、同步、日志接口落入漏网之鱼导致指纹浏览器不可用
+    - 'DOMAIN-SUFFIX,adspower.net,🧬 AdsPower'
+    - 'DOMAIN-SUFFIX,adspower.com,🧬 AdsPower'
 
     # Clash Verge Rev IP 信息查询优先走独立策略组：避免检测服务落入不稳定节点导致首页一直显示骨架屏
     - 'DOMAIN,api.ip.sb,🔎 IP 信息'
