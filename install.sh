@@ -223,6 +223,7 @@ load_env() {
   URLTEST_URL="${URLTEST_URL:-https://www.gstatic.com/generate_204}"
   URLTEST_INTERVAL="${URLTEST_INTERVAL:-3m}"
   URLTEST_TOLERANCE="${URLTEST_TOLERANCE:-50}"
+  RESIDENTIAL_GATEWAY_DIRECT_HOSTS="${RESIDENTIAL_GATEWAY_DIRECT_HOSTS:-}"
   LOG_LEVEL="${LOG_LEVEL:-info}"
   SSH_PORT="${SSH_PORT:-22}"
   ENABLE_UFW="${ENABLE_UFW:-true}"
@@ -454,6 +455,7 @@ generate_config() {
     --arg proxy2_pass "${PROXY2_PASS:-}" \
     --arg urltest_url "${URLTEST_URL}" \
     --arg urltest_interval "${URLTEST_INTERVAL}" \
+    --arg residential_gateway_direct_hosts "${RESIDENTIAL_GATEWAY_DIRECT_HOSTS}" \
     --argjson has_proxy2 "${HAS_PROXY2}" \
     --argjson trojan_port "${TROJAN_PORT}" \
     --argjson hysteria_port "${HYSTERIA_PORT}" \
@@ -473,6 +475,67 @@ generate_config() {
            then { zone_token: $cf_zone_read_token }
            else {}
            end));
+
+    def trimstr:
+      gsub("^\\s+|\\s+$"; "");
+
+    def host_list($hosts):
+      $hosts
+      | gsub("[\\n\\t ]+"; ",")
+      | split(",")
+      | map(trimstr)
+      | map(select(length > 0))
+      | unique;
+
+    def is_ip_or_cidr:
+      test("^([0-9]{1,3}\\.){3}[0-9]{1,3}(/[0-9]{1,2})?$") or contains(":");
+
+    def residential_gateway_ip_cidrs:
+      host_list($residential_gateway_direct_hosts)
+      | map(select(is_ip_or_cidr))
+      | map(if contains("/") then . elif contains(":") then . + "/128" else . + "/32" end);
+
+    def residential_gateway_domains:
+      host_list($residential_gateway_direct_hosts)
+      | map(select(is_ip_or_cidr | not));
+
+    def client_inbounds:
+      ["trojan-isp1-in", "hy2-isp1-in"] + (
+        if $has_proxy2 == 1 then
+          ["trojan-isp2-in", "hy2-isp2-in"]
+        else
+          []
+        end
+      );
+
+    def residential_gateway_direct_rules:
+      residential_gateway_ip_cidrs as $ip_cidrs
+      | residential_gateway_domains as $domains
+      | (
+        if ($ip_cidrs | length) > 0 then
+          [
+            {
+              inbound: client_inbounds,
+              ip_cidr: $ip_cidrs,
+              outbound: "direct-out"
+            }
+          ]
+        else
+          []
+        end
+      ) + (
+        if ($domains | length) > 0 then
+          [
+            {
+              inbound: client_inbounds,
+              domain: $domains,
+              outbound: "direct-out"
+            }
+          ]
+        else
+          []
+        end
+      );
 
     def trojan_inbound($tag; $port; $user_name):
       {
@@ -606,6 +669,16 @@ generate_config() {
           tolerance: $urltest_tolerance,
           interrupt_exist_connections: false
         },
+        (
+          if (host_list($residential_gateway_direct_hosts) | length) > 0 then
+            {
+              type: "direct",
+              tag: "direct-out"
+            }
+          else
+            empty
+          end
+        ),
         {
           type: "block",
           tag: "block"
@@ -616,7 +689,8 @@ generate_config() {
           [
             {
               action: "sniff"
-            },
+            }
+          ] + residential_gateway_direct_rules + [
             {
               inbound: ["trojan-isp1-in", "hy2-isp1-in"],
               outbound: "isp-out-1"
@@ -984,6 +1058,7 @@ Hysteria2:
 [服务端出口]
 ISP-1: SOCKS5 (${PROXY_HOST}:${PROXY_PORT})
 ISP-2: ${PROXY2_HOST:-未配置}
+住宅代理入口直连: ${RESIDENTIAL_GATEWAY_DIRECT_HOSTS:-未配置}
 Clash 自动容灾: T-ISP1 -> T-ISP2 -> J-ISP1 -> J-ISP2
 v2rayN/v2rayNG: 可手动选择 T-ISP1 / T-ISP2 / J-ISP1 / J-ISP2 节点
 
@@ -1018,6 +1093,9 @@ show_final_info() {
   echo "ISP-1 出口 : ${PROXY_HOST}:${PROXY_PORT}"
   if (( HAS_PROXY2 == 1 )); then
     echo "ISP-2 出口 : ${PROXY2_HOST}:${PROXY2_PORT}"
+  fi
+  if [[ -n "${RESIDENTIAL_GATEWAY_DIRECT_HOSTS:-}" ]]; then
+    echo "住宅入口直连: ${RESIDENTIAL_GATEWAY_DIRECT_HOSTS}"
   fi
   echo "Clash 容灾 : T-ISP1 -> T-ISP2 -> J-ISP1 -> J-ISP2"
   echo "v2 手选节点: T-ISP1 / T-ISP2 / J-ISP1 / J-ISP2"

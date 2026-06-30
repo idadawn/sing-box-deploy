@@ -47,6 +47,7 @@ nano .env   # 填写所有必填项
 | `ACME_EMAIL` | Let's Encrypt 注册邮箱 |
 | `PROXY_HOST/PORT/USER/PASS` | ISP-1 SOCKS5 代理凭据 |
 | `PROXY2_HOST/PORT/USER/PASS` | ISP-2 SOCKS5 代理凭据，可选，4 项需同时填写 |
+| `RESIDENTIAL_GATEWAY_DIRECT_HOSTS` | 可选，住宅代理入口网关直连白名单；用于 Clash Verge 全局扩展脚本把 T/J 节点当作前置中转时连接住宅代理入口 |
 | `TROJAN_PASSWORD` | Trojan 入站密码 |
 | `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
 | `CF_API_TOKEN` + `CF_ACCOUNT_ID` | Cloudflare Pages 部署凭据 |
@@ -81,6 +82,7 @@ sudo ./install.sh
 - `v2rayN / v2rayNG` 订阅直接下发 `T-ISP1-*`、`T-ISP2-*`、可选 `J-ISP1-*`、`J-ISP2-*` 节点，按需手动选择
 - `T/J` 服务器只作为接入中继层；OpenAI、Claude、Gemini、IP 信息查询和漏网兜底在 Clash 订阅中默认使用 ISP-only 专用策略组，避免误选 `DIRECT` 或把 T/J 公网 IP 当作最终出口
 - 如在 Clash Verge 中同时导入第三方机场，第三方机场只能放在客户端扩展脚本的中转组里；`🔎 IP 信息`、`🐟 漏网之鱼` 和最终出口组不要加入第三方机场或 `DIRECT`
+- 如要把 `T/J-ISP*` 节点放进全局扩展脚本的中转组，需把住宅代理网关填入 `RESIDENTIAL_GATEWAY_DIRECT_HOSTS`。该例外只让 T/J 直连住宅代理入口，普通网站流量仍不会走 VPS 直出兜底
 - Clash 订阅默认关闭 IPv6，并内置 Apple Push / iCloud 国际版分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
 
 ### 4. 管理

@@ -17,6 +17,10 @@ PROXY2_PORT=443
 PROXY2_USER=your_isp2_user
 PROXY2_PASS=your_isp2_pass
 
+# 当本节点作为客户端全局扩展脚本的前置中转时，住宅代理入口网关直连。
+# 多个值用逗号分隔；留空则所有入站仍按 ISP 出口转发。
+RESIDENTIAL_GATEWAY_DIRECT_HOSTS=
+
 # ========== 客户端认证 ==========
 TROJAN_PASSWORD=your_trojan_password
 HYSTERIA_PASSWORD=your_hy2_password
