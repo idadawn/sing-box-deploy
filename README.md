@@ -79,7 +79,8 @@ sudo ./install.sh
 
 - `Clash` 订阅内置自动容灾组，默认在 `T-ISP1/T-ISP2` 与可选 `J-ISP1/J-ISP2` 中继节点之间自动切换
 - `v2rayN / v2rayNG` 订阅直接下发 `T-ISP1-*`、`T-ISP2-*`、可选 `J-ISP1-*`、`J-ISP2-*` 节点，按需手动选择
-- `T/J` 服务器只作为接入中继层；OpenAI、Claude、Gemini 等 AI 服务在 Clash 订阅中默认使用 ISP-only 专用策略组，避免误选 `DIRECT` 或把 T/J 公网 IP 当作最终出口
+- `T/J` 服务器只作为接入中继层；OpenAI、Claude、Gemini、IP 信息查询和漏网兜底在 Clash 订阅中默认使用 ISP-only 专用策略组，避免误选 `DIRECT` 或把 T/J 公网 IP 当作最终出口
+- 如在 Clash Verge 中同时导入第三方机场，第三方机场只能放在客户端扩展脚本的中转组里；`🔎 IP 信息`、`🐟 漏网之鱼` 和最终出口组不要加入第三方机场或 `DIRECT`
 - Clash 订阅默认关闭 IPv6，并内置 Apple Push / iCloud 国际版分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
 
 ### 4. 管理

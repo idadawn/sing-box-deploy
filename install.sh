@@ -5,8 +5,8 @@ umask 077
 # =========================================================
 # sing-box 自动化部署脚本（Debian / Ubuntu）
 # - Trojan + Hysteria2
-# - 主出口：1024proxy SOCKS5（IP2）
-# - 备出口：服务器直出（IP1）
+# - 主出口：ISP SOCKS5（ISP-1 / 可选 ISP-2）
+# - 无 VPS 直出兜底，未匹配的 sing-box 入站默认 block
 # - Cloudflare DNS-01 自动签发证书
 # - 配置校验 / 失败回滚 / 增量 UFW
 # =========================================================
@@ -1342,7 +1342,8 @@ export async function onRequest(context) {
   const proxyGroupLines = proxyNames.map((name) => `      - "${name}"`).join('\n');
   const ispOnlyProxyGroupLines = ispOnlyProxyNames.map((name) => `      - "${name}"`).join('\n');
   const selectProxyLines = [`      - "♻️ 自动选择"`, `      - "🛡️ 自动容灾"`, ...proxyNames.map((name) => `      - "${name}"`)].join('\n');
-  const fallbackProxyLines = [`      - "🚀 节点选择"`, `      - "♻️ 自动选择"`, `      - "🛡️ 自动容灾"`, ...proxyNames.map((name) => `      - "${name}"`)].join('\n');
+  const ispOnlySelectProxyLines = [`      - "🛡️ ISP 出口自动"`, ...ispOnlyProxyNames.map((name) => `      - "${name}"`)].join('\n');
+  const fallbackProxyLines = ispOnlySelectProxyLines;
 
   const config = `mixed-port: 7890
 allow-lan: false
@@ -1438,10 +1439,19 @@ ${proxyGroupLines}
     proxies:
 ${selectProxyLines}
 
+  - name: "🛡️ ISP 出口自动"
+    type: fallback
+    proxies:
+${ispOnlyProxyGroupLines}
+    url: "https://cp.cloudflare.com"
+    interval: 300
+    timeout: 3000
+
   - name: "🤖 AI 服务"
     type: select
     proxies:
       - "🤖 AI 自动"
+      - "🛡️ ISP 出口自动"
 ${ispOnlyProxyGroupLines}
 
   - name: "🤖 AI 自动"
@@ -1498,10 +1508,7 @@ ${ispOnlyProxyGroupLines}
   - name: "🔎 IP 信息"
     type: select
     proxies:
-      - "🚀 节点选择"
-      - "♻️ 自动选择"
-      - "🛡️ 自动容灾"
-      - DIRECT
+${ispOnlySelectProxyLines}
 
   - name: "🧬 AdsPower"
     type: select
