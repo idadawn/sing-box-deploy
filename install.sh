@@ -1048,11 +1048,11 @@ verify_subscription() {
     # 验证 v2rayN 订阅
     if [[ $v2_ok -eq 0 ]]; then
       local v2_content=$(curl -sL --max-time 10 "https://${domain}/v2" 2>/dev/null | base64 -d 2>/dev/null)
-      if echo "$v2_content" | grep -q "trojan://"; then
-        local v2_node_count=$(echo "$v2_content" | grep -c "://")
+      if grep -q "trojan://" <<< "$v2_content"; then
+        local v2_node_count=$(grep -c "://" <<< "$v2_content")
         log_success "v2rayN 订阅正常: 发现 ${v2_node_count} 个节点"
         # 显示节点名称
-        echo "$v2_content" | grep -oP '#\K[^ ]+' | while read name; do
+        grep -oP '#\K[^ ]+' <<< "$v2_content" | while read name; do
           log_info "  └─ 节点: $name"
         done
         v2_ok=1
@@ -1064,8 +1064,8 @@ verify_subscription() {
     # 验证 Clash 订阅
     if [[ $c_ok -eq 0 ]]; then
       local c_content=$(curl -sL --max-time 10 "https://${domain}/c" 2>/dev/null)
-      if echo "$c_content" | grep -q "proxies:"; then
-        local c_node_count=$(echo "$c_content" | grep -c "name:")
+      if grep -q "proxies:" <<< "$c_content"; then
+        local c_node_count=$(grep -c "name:" <<< "$c_content")
         log_success "Clash 订阅正常: 发现 ${c_node_count} 个节点"
         c_ok=1
       else
