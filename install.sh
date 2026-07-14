@@ -6,7 +6,8 @@ umask 077
 # sing-box 自动化部署脚本（Debian / Ubuntu）
 # - Trojan + Hysteria2
 # - 主出口：ISP SOCKS5（ISP-1 / 可选 ISP-2）
-# - 无 VPS 直出兜底，未匹配的 sing-box 入站默认 block
+# - AI 强制走 ISP；可选让视频/CDN/软件包下载从当前服务器直出
+# - 无通用 VPS 直出兜底，未匹配的 sing-box 入站默认 block
 # - Cloudflare DNS-01 自动签发证书
 # - 配置校验 / 失败回滚 / 增量 UFW
 # =========================================================
@@ -28,6 +29,25 @@ NO_START=0
 
 TMP_CONFIG=""
 BACKUP_CONFIG=""
+
+DEFAULT_AI_ISP_DOMAINS="openai.com,chatgpt.com,oaistatic.com,oaiusercontent.com,openai.azure.com,anthropic.com,claude.ai"
+DEFAULT_AI_ISP_DOMAINS+=",gemini.google.com,aistudio.google.com,ai.google.dev,bard.google.com,generativelanguage.googleapis.com,aiplatform.googleapis.com"
+DEFAULT_AI_ISP_DOMAINS+=",deepseek.com,deepseek.ai,perplexity.ai,grok.com,x.ai,huggingface.co,hf.co,huggingfaceusercontent.com"
+DEFAULT_AI_ISP_DOMAINS+=",githubcopilot.com,copilot.microsoft.com,copilot-proxy.githubusercontent.com,openrouter.ai,poe.com"
+DEFAULT_AI_ISP_DOMAINS+=",mistral.ai,cohere.com,cohere.ai,groq.com,groqcloud.com,together.ai,together.xyz,fireworks.ai"
+DEFAULT_AI_ISP_DOMAINS+=",replicate.com,replicate.delivery,stability.ai,midjourney.com,cursor.com,cursor.sh,codeium.com,windsurf.com"
+DEFAULT_AI_ISP_DOMAINS+=",qwen.ai,dashscope.aliyuncs.com,tavily.com,exa.ai"
+
+DEFAULT_DIRECT_BULK_DOMAINS="youtube.com,youtu.be,youtube-nocookie.com,googlevideo.com,ytimg.com,youtubei.googleapis.com,ggpht.com"
+DEFAULT_DIRECT_BULK_DOMAINS+=",twitch.tv,ttvnw.net,jtvnw.net,vimeo.com,vimeocdn.com,dailymotion.com,dmcdn.net"
+DEFAULT_DIRECT_BULK_DOMAINS+=",python.org,pypi.org,pythonhosted.org,nodejs.org,npmjs.org,npmjs.com"
+DEFAULT_DIRECT_BULK_DOMAINS+=",githubassets.com,githubusercontent.com,release-assets.githubusercontent.com,codeload.github.com,ghcr.io"
+DEFAULT_DIRECT_BULK_DOMAINS+=",docker.io,docker.com,dockerusercontent.com,production.cloudflare.docker.com"
+DEFAULT_DIRECT_BULK_DOMAINS+=",crates.io,rustup.rs,static.rust-lang.org,proxy.golang.org,sum.golang.org,go.dev"
+DEFAULT_DIRECT_BULK_DOMAINS+=",repo.maven.apache.org,repo1.maven.org,gradle.org,debian.org,ubuntu.com,packages.microsoft.com"
+DEFAULT_DIRECT_BULK_DOMAINS+=",download.jetbrains.com,cache-redirector.jetbrains.com,dl.google.com,dl.k8s.io,k8s.io"
+DEFAULT_DIRECT_BULK_DOMAINS+=",swcdn.apple.com,updates.cdn-apple.com,mesu.apple.com,windowsupdate.com,download.microsoft.com"
+DEFAULT_DIRECT_BULK_DOMAINS+=",steamcontent.com,steamstatic.com"
 
 # -----------------------------
 # 颜色
@@ -223,7 +243,9 @@ load_env() {
   URLTEST_URL="${URLTEST_URL:-https://www.gstatic.com/generate_204}"
   URLTEST_INTERVAL="${URLTEST_INTERVAL:-3m}"
   URLTEST_TOLERANCE="${URLTEST_TOLERANCE:-50}"
-  RESIDENTIAL_GATEWAY_DIRECT_HOSTS="${RESIDENTIAL_GATEWAY_DIRECT_HOSTS:-}"
+  AI_ISP_DOMAINS="${AI_ISP_DOMAINS:-${DEFAULT_AI_ISP_DOMAINS}}"
+  DIRECT_BULK_ENABLED="${DIRECT_BULK_ENABLED:-false}"
+  DIRECT_BULK_DOMAINS="${DIRECT_BULK_DOMAINS:-${DEFAULT_DIRECT_BULK_DOMAINS}}"
   LOG_LEVEL="${LOG_LEVEL:-info}"
   SSH_PORT="${SSH_PORT:-22}"
   ENABLE_UFW="${ENABLE_UFW:-true}"
@@ -436,6 +458,11 @@ generate_config() {
 
   TMP_CONFIG="$(mktemp /tmp/sing-box-config.XXXXXX.json)"
 
+  local direct_bulk_enabled_json=false
+  if is_true "${DIRECT_BULK_ENABLED}"; then
+    direct_bulk_enabled_json=true
+  fi
+
   jq -n \
     --arg log_level "${LOG_LEVEL}" \
     --arg trojan_domain "${TROJAN_DOMAIN}" \
@@ -455,7 +482,9 @@ generate_config() {
     --arg proxy2_pass "${PROXY2_PASS:-}" \
     --arg urltest_url "${URLTEST_URL}" \
     --arg urltest_interval "${URLTEST_INTERVAL}" \
-    --arg residential_gateway_direct_hosts "${RESIDENTIAL_GATEWAY_DIRECT_HOSTS}" \
+    --arg ai_isp_domains "${AI_ISP_DOMAINS}" \
+    --arg direct_bulk_domains "${DIRECT_BULK_DOMAINS}" \
+    --argjson direct_bulk_enabled "${direct_bulk_enabled_json}" \
     --argjson has_proxy2 "${HAS_PROXY2}" \
     --argjson trojan_port "${TROJAN_PORT}" \
     --argjson hysteria_port "${HYSTERIA_PORT}" \
@@ -479,25 +508,13 @@ generate_config() {
     def trimstr:
       gsub("^\\s+|\\s+$"; "");
 
-    def host_list($hosts):
-      $hosts
+    def domain_list($domains):
+      $domains
       | gsub("[\\n\\t ]+"; ",")
       | split(",")
       | map(trimstr)
       | map(select(length > 0))
       | unique;
-
-    def is_ip_or_cidr:
-      test("^([0-9]{1,3}\\.){3}[0-9]{1,3}(/[0-9]{1,2})?$") or contains(":");
-
-    def residential_gateway_ip_cidrs:
-      host_list($residential_gateway_direct_hosts)
-      | map(select(is_ip_or_cidr))
-      | map(if contains("/") then . elif contains(":") then . + "/128" else . + "/32" end);
-
-    def residential_gateway_domains:
-      host_list($residential_gateway_direct_hosts)
-      | map(select(is_ip_or_cidr | not));
 
     def client_inbounds:
       ["trojan-isp1-in", "hy2-isp1-in"] + (
@@ -508,34 +525,33 @@ generate_config() {
         end
       );
 
-    def residential_gateway_direct_rules:
-      residential_gateway_ip_cidrs as $ip_cidrs
-      | residential_gateway_domains as $domains
-      | (
-        if ($ip_cidrs | length) > 0 then
+    def ai_isp_rules:
+      domain_list($ai_isp_domains) as $domains
+      | if ($domains | length) > 0 then
           [
             {
               inbound: client_inbounds,
-              ip_cidr: $ip_cidrs,
+              domain_suffix: $domains,
+              outbound: "ai-out"
+            }
+          ]
+        else
+          []
+        end;
+
+    def direct_bulk_rules:
+      domain_list($direct_bulk_domains) as $domains
+      | if $direct_bulk_enabled and (($domains | length) > 0) then
+          [
+            {
+              inbound: client_inbounds,
+              domain_suffix: $domains,
               outbound: "direct-out"
             }
           ]
         else
           []
-        end
-      ) + (
-        if ($domains | length) > 0 then
-          [
-            {
-              inbound: client_inbounds,
-              domain: $domains,
-              outbound: "direct-out"
-            }
-          ]
-        else
-          []
-        end
-      );
+        end;
 
     def trojan_inbound($tag; $port; $user_name):
       {
@@ -670,7 +686,7 @@ generate_config() {
           interrupt_exist_connections: false
         },
         (
-          if (host_list($residential_gateway_direct_hosts) | length) > 0 then
+          if $direct_bulk_enabled and ((domain_list($direct_bulk_domains) | length) > 0) then
             {
               type: "direct",
               tag: "direct-out"
@@ -690,7 +706,7 @@ generate_config() {
             {
               action: "sniff"
             }
-          ] + residential_gateway_direct_rules + [
+          ] + ai_isp_rules + direct_bulk_rules + [
             {
               inbound: ["trojan-isp1-in", "hy2-isp1-in"],
               outbound: "isp-out-1"
@@ -1058,7 +1074,8 @@ Hysteria2:
 [服务端出口]
 ISP-1: SOCKS5 (${PROXY_HOST}:${PROXY_PORT})
 ISP-2: ${PROXY2_HOST:-未配置}
-住宅代理入口直连: ${RESIDENTIAL_GATEWAY_DIRECT_HOSTS:-未配置}
+AI 域名: 强制使用 ISP 自动出口
+视频/软件下载直出: ${DIRECT_BULK_ENABLED}
 Clash 自动容灾: T-ISP1 -> T-ISP2 -> J-ISP1 -> J-ISP2
 v2rayN/v2rayNG: 可手动选择 T-ISP1 / T-ISP2 / J-ISP1 / J-ISP2 节点
 
@@ -1094,9 +1111,8 @@ show_final_info() {
   if (( HAS_PROXY2 == 1 )); then
     echo "ISP-2 出口 : ${PROXY2_HOST}:${PROXY2_PORT}"
   fi
-  if [[ -n "${RESIDENTIAL_GATEWAY_DIRECT_HOSTS:-}" ]]; then
-    echo "住宅入口直连: ${RESIDENTIAL_GATEWAY_DIRECT_HOSTS}"
-  fi
+  echo "AI 域名策略: ISP 自动出口"
+  echo "视频/下载直出: ${DIRECT_BULK_ENABLED}"
   echo "Clash 容灾 : T-ISP1 -> T-ISP2 -> J-ISP1 -> J-ISP2"
   echo "v2 手选节点: T-ISP1 / T-ISP2 / J-ISP1 / J-ISP2"
   echo "配置文件   : ${CONFIG_PATH}"

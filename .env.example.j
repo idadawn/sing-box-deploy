@@ -17,9 +17,12 @@ PROXY2_PORT=443
 PROXY2_USER=your_isp2_user
 PROXY2_PASS=your_isp2_pass
 
-# 当本节点作为客户端全局扩展脚本的前置中转时，住宅代理入口网关直连。
-# 多个值用逗号分隔；留空则所有入站仍按 ISP 出口转发。
-RESIDENTIAL_GATEWAY_DIRECT_HOSTS=
+# AI 域名始终走 ISP 自动出口；留空使用脚本内置清单。
+AI_ISP_DOMAINS=
+# J 默认不承担公网直出，避免把 J 的 VPS IP 暴露给视频/下载站点。
+DIRECT_BULK_ENABLED=false
+# 留空使用脚本内置清单。
+DIRECT_BULK_DOMAINS=
 
 # ========== 客户端认证 ==========
 TROJAN_PASSWORD=your_trojan_password
