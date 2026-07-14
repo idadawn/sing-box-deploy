@@ -5105,7 +5105,7 @@ REDIRECTS
   log_info "开始部署到 Cloudflare Pages..."
   
   # 执行部署
-  if (cd "$pages_dir" && CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="sub-converter" --branch=main 2>&1); then
+  if (cd "$pages_dir" && GIT_OPTIONAL_LOCKS=0 CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="sub-converter" --branch=main 2>&1); then
     log_success "Cloudflare Pages 部署完成"
     log_info "订阅链接: https://${SUB_DOMAIN}/v2 (v2rayN)"
     log_info "订阅链接: https://${SUB_DOMAIN}/c (Clash)"
