@@ -23,6 +23,8 @@ AI_ISP_DOMAINS=
 DIRECT_BULK_ENABLED=false
 # 留空使用脚本内置清单。
 DIRECT_BULK_DOMAINS=
+# Clash 规则源；J 通常不部署 Pages，保留为空即可。
+CLASH_RULESET_BASE_URL=
 
 # ========== 客户端认证 ==========
 TROJAN_PASSWORD=your_trojan_password

@@ -1,6 +1,6 @@
 # sing-box 自动化部署方案
 
-Debian / Ubuntu 一键部署 **Trojan + Hysteria2** 中继服务器。项目支持 `T` 与可选 `J` 两台海外服务器作为接入层，AI 与普通流量由 `ISP-1` 和可选 `ISP-2` SOCKS5 出口承担；也可只在 T 服务器启用视频/CDN/软件包下载直出。Clash 订阅内置 T/J 接入容灾与 ISP 出口容灾，订阅配置托管在 Cloudflare Pages。
+Debian / Ubuntu 一键部署 **Trojan + Hysteria2** 中继服务器。项目支持 `T` 与可选 `J` 两台海外服务器作为接入层，AI 与普通流量由 `ISP-1` 和可选 `ISP-2` SOCKS5 出口承担；也可只在 T 服务器启用视频/CDN/软件包下载直出。Clash 订阅内置 T/J 接入容灾、ISP 出口容灾，以及每日更新的 [Loyalsoldier/clash-rules](https://github.com/Loyalsoldier/clash-rules) 规则集。
 
 ## 架构概览
 
@@ -52,6 +52,7 @@ nano .env   # 填写所有必填项
 | `AI_ISP_DOMAINS` | 可选，始终走 ISP 自动出口的 AI 域名清单；留空使用内置清单 |
 | `DIRECT_BULK_ENABLED` | 是否让视频/CDN/软件下载从当前服务器直出；建议仅 T 设置为 `true` |
 | `DIRECT_BULK_DOMAINS` | 可选，直出域名清单；留空使用内置清单 |
+| `CLASH_RULESET_BASE_URL` | 可选，Loyalsoldier `release` 规则地址；留空使用 GitHub Raw |
 | `TROJAN_PASSWORD` | Trojan 入站密码 |
 | `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
 | `CF_API_TOKEN` + `CF_ACCOUNT_ID` | Cloudflare Pages 部署凭据 |
@@ -87,16 +88,19 @@ sudo ./install.sh
 - AI 域名在服务端优先匹配 `ai-out`，只会在 ISP-1/ISP-2 之间选择，不会落到服务器直出
 - 如在 Clash Verge 中同时导入第三方机场，第三方机场只能放在客户端扩展脚本的中转组里；`🔎 IP 信息`、`🐟 漏网之鱼` 和最终出口组不要加入第三方机场或 `DIRECT`
 - `DIRECT_BULK_ENABLED=true` 时，仅内置或自定义的视频/CDN/软件下载域名使用当前服务器公网 IP；J 默认关闭该能力
-- Clash 订阅默认关闭 IPv6，并内置 Apple Push / iCloud 国际版分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
+- Clash 通用规则通过 `rule-providers` 每天更新；自定义 AI 与 TX 大流量规则始终优先于上游通用规则
+- Clash 订阅默认关闭 IPv6，并保留 Apple / iCloud 分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
 
 ### 服务端分流优先级
 
-1. AI 域名优先匹配并发送到 `ai-out`，覆盖 OpenAI、Claude、Gemini、Copilot、DeepSeek、Perplexity、Hugging Face、OpenRouter、Mistral、Groq、Cursor 等常用服务。
-2. 启用高带宽直出后，YouTube、Twitch、Vimeo，以及 Python、Node/npm、GitHub Releases、Docker、Rust、Go、Maven、Linux/Windows/macOS 更新等域名发送到 `direct-out`。
+1. AI 域名优先匹配并发送到 `ai-out`，覆盖 OpenAI、Claude、Gemini、Copilot、DeepSeek、Perplexity、OpenRouter、Mistral、Groq、Cursor 等常用服务。
+2. 启用高带宽直出后，YouTube、Twitch、Vimeo、Hugging Face、OneDrive/SharePoint，以及 Python、Node/npm、GitHub Releases、Docker、Rust、Go、Maven、Linux/Windows/macOS 更新等域名发送到 `direct-out`。
 3. Netflix、Disney、Hulu 等依赖地区解锁的流媒体不在直出清单中，仍使用 ISP。
 4. 其余客户端流量按入口发送到对应 ISP；`route.final` 保持 `block`，不存在通用 VPS 兜底。
 
 AI 规则排在直出规则之前。例如 `copilot-proxy.githubusercontent.com` 即使同时命中 GitHub 下载域名，也仍会使用 ISP。两份域名清单都可通过 `.env` 覆盖。
+
+Clash 客户端中的 `📦 TX 大流量` 组只包含 T 节点，确保上述下载流量先进入 T，再由服务端 `direct-out` 直出。Loyalsoldier 的 `proxy.txt` 本身包含 Hugging Face 和 OneDrive 域名，但本项目的自定义规则位于 `RULE-SET` 之前，因此不会被上游策略覆盖。
 
 ### 4. 管理
 
