@@ -1149,7 +1149,7 @@ verify_subscription() {
   log_info "验证订阅链接..."
   
   local domain="${SUB_DOMAIN}"
-  local max_retry=3
+  local max_retry=6
   local retry=0
   local v2_ok=0
   local c_ok=0
@@ -1157,14 +1157,15 @@ verify_subscription() {
   local rules_ok=0
   local c_content=""
   local script_content=""
+  local verification_query="verify=$(date +%s)"
   
   # 等待几秒让部署生效
-  sleep 2
+  sleep 3
   
   while [[ $retry -lt $max_retry ]]; do
     # 验证 v2rayN 订阅
     if [[ $v2_ok -eq 0 ]]; then
-      local v2_content=$(curl -sL --max-time 10 "https://${domain}/v2" 2>/dev/null | base64 -d 2>/dev/null)
+      local v2_content=$(curl -sL --max-time 10 "https://${domain}/v2?${verification_query}" 2>/dev/null | base64 -d 2>/dev/null)
       if grep -q "trojan://" <<< "$v2_content"; then
         local v2_node_count=$(grep -c "://" <<< "$v2_content")
         log_success "v2rayN 订阅正常: 发现 ${v2_node_count} 个节点"
@@ -1180,7 +1181,7 @@ verify_subscription() {
     
     # 验证 Clash 订阅
     if [[ $c_ok -eq 0 ]]; then
-      c_content=$(curl -sL --max-time 10 "https://${domain}/c" 2>/dev/null)
+      c_content=$(curl -sL --max-time 10 "https://${domain}/c?${verification_query}" 2>/dev/null)
       if grep -q "proxies:" <<< "$c_content" && grep -Fq "${CLASH_RULESET_BASE_URL%/}/proxy.txt" <<< "$c_content"; then
         local c_node_count=$(grep -c "name:" <<< "$c_content")
         log_success "Clash 订阅正常: 发现 ${c_node_count} 个节点"
@@ -1192,7 +1193,7 @@ verify_subscription() {
 
     # 验证 Clash Verge 全局扩展脚本
     if [[ $script_ok -eq 0 ]]; then
-      script_content=$(curl -sL --max-time 10 "https://${domain}/s" 2>/dev/null)
+      script_content=$(curl -sL --max-time 10 "https://${domain}/s?${verification_query}" 2>/dev/null)
       if grep -q "function main(config)" <<< "$script_content" && grep -q '"dialer-proxy"' <<< "$script_content" && grep -Fq "${CLASH_RULESET_BASE_URL%/}" <<< "$script_content"; then
         log_success "Clash Verge 全局扩展脚本正常"
         script_ok=1
@@ -1204,7 +1205,7 @@ verify_subscription() {
     # 元数据仅在全部规则文件校验成功后生成，可作为线上快照完整性标记。
     if [[ $rules_ok -eq 0 ]]; then
       local rules_metadata
-      rules_metadata=$(curl -sL --max-time 10 "https://${domain}/rules/metadata.json" 2>/dev/null)
+      rules_metadata=$(curl -sL --max-time 10 "https://${domain}/rules/metadata.json?${verification_query}" 2>/dev/null)
       if jq -e '(.upstream_sha | strings | test("^[0-9a-f]{40}$")) and (.files | length == 10)' <<< "$rules_metadata" >/dev/null 2>&1; then
         log_success "Loyalsoldier 规则镜像正常"
         rules_ok=1
@@ -1221,7 +1222,7 @@ verify_subscription() {
     
     retry=$((retry + 1))
     if [[ $retry -lt $max_retry ]]; then
-      sleep 3
+      sleep 4
     fi
   done
   
@@ -2243,6 +2244,13 @@ GLOBALJS
 # Clash Verge 全局扩展脚本
 /s /global-extension.js 200
 REDIRECTS
+
+  chmod 0755 "${functions_dir}"
+  chmod 0644 \
+    "${functions_dir}/v2.js" \
+    "${functions_dir}/c.js" \
+    "${pages_dir}/global-extension.js" \
+    "${pages_dir}/_redirects"
 
   log_success "订阅配置文件已更新"
 
