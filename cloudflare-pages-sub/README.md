@@ -6,7 +6,7 @@
 - `v2rayN / v2rayNG` 订阅直接提供 `T-ISP1/T-ISP2` 与可选 `J-ISP1/J-ISP2` 手动节点
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
-- Clash 通用分流引用 Loyalsoldier `release` 规则集，每 24 小时由客户端自动更新
+- 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
 
 ## 订阅链接
 
@@ -27,6 +27,7 @@ cloudflare-pages-sub/
 │   └── c.js             # Clash 订阅接口 (/c)
 ├── _redirects           # 重定向规则（由 install.sh 生成）
 ├── global-extension.js  # 任意机场的全局扩展脚本（由 install.sh 生成）
+├── rules/               # Loyalsoldier 规则快照（由定时服务生成）
 ├── index.html           # 订阅入口页面
 ├── package.json         # 项目配置
 ├── wrangler.toml        # Wrangler 配置
@@ -43,6 +44,8 @@ sudo ./install.sh
 
 前提条件：`.env` 中配置好 `CF_API_TOKEN`、`CF_ACCOUNT_ID` 和 `SUB_DOMAIN`。
 
+安装脚本还会启用 `clash-rules-sync.timer`。它每天在北京时间 07:15 后检查上游，只有全部规则文件校验通过才替换旧快照并重新部署 Pages；失败时继续保留上一版。
+
 ## 手动部署
 
 如需手动更新订阅配置：
@@ -51,7 +54,7 @@ sudo ./install.sh
 cd cloudflare-pages-sub
 export CLOUDFLARE_API_TOKEN="你的Token"
 export CLOUDFLARE_ACCOUNT_ID="你的AccountID"
-wrangler pages deploy . --project-name="sub-converter" --branch=main
+wrangler pages deploy . --project-name="${CF_PAGES_PROJECT:-sub-converter}" --branch=main
 ```
 
 ## 绑定自定义域名

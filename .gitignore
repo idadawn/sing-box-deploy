@@ -5,6 +5,8 @@
 cloudflare-pages-sub/functions/v2.js
 cloudflare-pages-sub/functions/c.js
 cloudflare-pages-sub/_redirects
+cloudflare-pages-sub/global-extension.js
+cloudflare-pages-sub/rules/
 
 # ── 运行时产物 ───────────────────────────────────────────
 client-info.txt
