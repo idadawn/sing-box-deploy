@@ -154,6 +154,12 @@ validate_snapshot() {
   fi
 }
 
+normalize_snapshot_permissions() {
+  local directory="$1"
+  chmod 0755 "${directory}"
+  chmod 0644 "${directory}"/*.txt "${directory}/metadata.json"
+}
+
 resolve_raw_base_url() {
   if [[ -n "${CLASH_RULESET_RAW_BASE_URL:-}" ]]; then
     printf '%s' "${CLASH_RULESET_RAW_BASE_URL%/}"
@@ -224,8 +230,7 @@ download_snapshot() {
     log_error "规则快照元数据校验失败，保留当前快照"
     return 1
   }
-  chmod 0755 "${stage_dir}"
-  chmod 0644 "${stage_dir}"/*.txt "${stage_dir}/metadata.json"
+  normalize_snapshot_permissions "${stage_dir}"
 
   local previous_dir="${CLASH_RULESET_OUTPUT_DIR}.previous"
   rm -rf "${previous_dir}"
@@ -303,6 +308,7 @@ main() {
   else
     log_ok "规则已是最新提交 ${upstream_sha}"
   fi
+  normalize_snapshot_permissions "${CLASH_RULESET_OUTPUT_DIR}"
 
   if (( DEPLOY == 1 )); then
     deploy_pages
