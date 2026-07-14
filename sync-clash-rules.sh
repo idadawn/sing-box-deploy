@@ -224,6 +224,7 @@ download_snapshot() {
     log_error "规则快照元数据校验失败，保留当前快照"
     return 1
   }
+  chmod 0755 "${stage_dir}"
   chmod 0644 "${stage_dir}"/*.txt "${stage_dir}/metadata.json"
 
   local previous_dir="${CLASH_RULESET_OUTPUT_DIR}.previous"
