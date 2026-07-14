@@ -4,7 +4,9 @@
 
 - `Clash` 订阅内置 T/J 接入容灾与 ISP-1/ISP-2 出口容灾
 - `v2rayN / v2rayNG` 订阅直接提供 `T-ISP1/T-ISP2` 与可选 `J-ISP1/J-ISP2` 手动节点
-- T/J 服务器只作为中继层；AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
+- AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
+- Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
+- Clash 通用分流引用 Loyalsoldier `release` 规则集，每 24 小时由客户端自动更新
 
 ## 订阅链接
 
@@ -70,4 +72,4 @@ wrangler pages deploy . --project-name="sub-converter" --branch=main
 1. 配置 → 新建
 2. 订阅 URL 填写 `https://<SUB_DOMAIN>/c`
 3. 下载并启用
-4. 默认选择 `🛡️ 自动容灾` 或 `♻️ 自动选择`，即可在 T/J 中继节点与 ISP-1/ISP-2 出口之间切换
+4. 默认选择 `🛡️ 自动容灾` 或 `♻️ 自动选择`，即可在 T/J 中继节点与 ISP-1/ISP-2 出口之间切换；大流量规则会自动使用 `📦 TX 大流量`
