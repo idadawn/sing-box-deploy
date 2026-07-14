@@ -82,11 +82,12 @@ sudo ./install.sh
 |--------|----------|
 | v2rayN | `https://<SUB_DOMAIN>/v2` |
 | Clash  | `https://<SUB_DOMAIN>/c`  |
+| Clash Verge 全局扩展脚本 | `https://<SUB_DOMAIN>/s` |
 
 - `Clash` 订阅内置自动容灾组，默认在 `T-ISP1/T-ISP2` 与可选 `J-ISP1/J-ISP2` 中继节点之间自动切换
 - `v2rayN / v2rayNG` 订阅直接下发 `T-ISP1-*`、`T-ISP2-*`、可选 `J-ISP1-*`、`J-ISP2-*` 节点，按需手动选择
 - AI 域名在服务端优先匹配 `ai-out`，只会在 ISP-1/ISP-2 之间选择，不会落到服务器直出
-- 如在 Clash Verge 中同时导入第三方机场，第三方机场只能放在客户端扩展脚本的中转组里；`🔎 IP 信息`、`🐟 漏网之鱼` 和最终出口组不要加入第三方机场或 `DIRECT`
+- 如需同时使用任意第三方机场，将 `/s` 的内容粘贴到 Clash Verge 的全局扩展脚本。脚本会把原机场节点放入 `🛫 机场中转`，并让注入的 T/J 节点通过该组建立连接；机场不会成为网站最终出口
 - `DIRECT_BULK_ENABLED=true` 时，仅内置或自定义的视频/CDN/软件下载域名使用当前服务器公网 IP；J 默认关闭该能力
 - Clash 通用规则通过 `rule-providers` 每天更新；自定义 AI 与 TX 大流量规则始终优先于上游通用规则
 - Clash 订阅默认关闭 IPv6，并保留 Apple / iCloud 分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
@@ -101,6 +102,14 @@ sudo ./install.sh
 AI 规则排在直出规则之前。例如 `copilot-proxy.githubusercontent.com` 即使同时命中 GitHub 下载域名，也仍会使用 ISP。两份域名清单都可通过 `.env` 覆盖。
 
 Clash 客户端中的 `📦 TX 大流量` 组只包含 T 节点，确保上述下载流量先进入 T，再由服务端 `direct-out` 直出。Loyalsoldier 的 `proxy.txt` 本身包含 Hugging Face 和 OneDrive 域名，但本项目的自定义规则位于 `RULE-SET` 之前，因此不会被上游策略覆盖。
+
+### Clash Verge 全局扩展脚本
+
+1. 保留并启用任意机场订阅。
+2. 打开 `https://<SUB_DOMAIN>/s`，将完整内容粘贴到 Clash Verge 的“全局扩展脚本”。
+3. 保存并更新机场配置。页面会出现 `🛡️ ISP 最终出口`、`📦 TX 大流量` 和 `🛫 机场中转` 三个组。
+
+脚本会自动接入同一套 Loyalsoldier 规则，并重写机场原有代理策略：AI、IP 检测和最终兜底使用 T/J -> ISP，视频和下载使用 T -> `direct-out`，局域网、中国大陆和上游 `direct` 规则仍在本机直连。`/s` 与 `/c` 一样包含节点凭据，请勿公开转发。
 
 ### 4. 管理
 
@@ -150,6 +159,7 @@ sing-box-deploy/
     ├── functions/
     │   ├── v2.js                     # v2rayN 订阅（由 install.sh 生成）
     │   └── c.js                      # Clash 订阅（由 install.sh 生成）
+    ├── global-extension.js           # Clash Verge 全局扩展脚本（由 install.sh 生成）
     ├── _redirects                    # 重定向规则（由 install.sh 生成）
     ├── index.html                    # Pages 占位页
     ├── wrangler.toml                 # Wrangler 配置
