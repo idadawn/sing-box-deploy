@@ -1142,6 +1142,7 @@ verify_subscription() {
   local retry=0
   local v2_ok=0
   local c_ok=0
+  local script_ok=0
   
   # 等待几秒让部署生效
   sleep 2
@@ -1174,9 +1175,20 @@ verify_subscription() {
         log_warn "Clash 订阅验证失败，重试..."
       fi
     fi
+
+    # 验证 Clash Verge 全局扩展脚本
+    if [[ $script_ok -eq 0 ]]; then
+      local script_content=$(curl -sL --max-time 10 "https://${domain}/s" 2>/dev/null)
+      if grep -q "function main(config)" <<< "$script_content" && grep -q '"dialer-proxy"' <<< "$script_content"; then
+        log_success "Clash Verge 全局扩展脚本正常"
+        script_ok=1
+      else
+        log_warn "Clash Verge 全局扩展脚本验证失败，重试..."
+      fi
+    fi
     
     # 都成功则退出
-    if [[ $v2_ok -eq 1 && $c_ok -eq 1 ]]; then
+    if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 ]]; then
       log_success "订阅验证全部通过！"
       return 0
     fi
@@ -1193,6 +1205,9 @@ verify_subscription() {
   fi
   if [[ $c_ok -eq 0 ]]; then
     log_error "Clash 订阅验证失败: https://${domain}/c"
+  fi
+  if [[ $script_ok -eq 0 ]]; then
+    log_error "Clash Verge 全局扩展脚本验证失败: https://${domain}/s"
   fi
   log_info "请检查: 1) DNS 解析 2) Cloudflare Pages 部署状态 3) 自定义域名绑定"
   return 1
@@ -1769,6 +1784,303 @@ ${txBulkRuleLines}
 }
 CJS
 
+  # 生成 Clash Verge 全局扩展脚本：任意机场仅作为 T/J 节点的前置中转。
+  cat > "${pages_dir}/global-extension.js" <<'GLOBALJS'
+const FINAL_GROUP_NAME = "🛡️ ISP 最终出口";
+const TX_GROUP_NAME = "📦 TX 大流量";
+const TRANSIT_GROUP_NAME = "🛫 机场中转";
+const CUSTOM_GROUP_NAMES = new Set([
+  FINAL_GROUP_NAME,
+  TX_GROUP_NAME,
+  TRANSIT_GROUP_NAME,
+]);
+
+const AI_ISP_DOMAINS = AI_ISP_DOMAINS_JSON_PLACEHOLDER;
+const TX_BULK_DOMAINS = DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER;
+const IP_CHECK_DOMAINS = [
+  "ip.sb",
+  "ipapi.co",
+  "ipapi.is",
+  "ipwho.is",
+  "geojs.io",
+  "ipify.org",
+  "ipinfo.io",
+  "ifconfig.me",
+  "icanhazip.com",
+];
+const RULESET_BASE_URL = "CLASH_RULESET_BASE_URL_PLACEHOLDER";
+const finalOverlayDomains = new Set([...AI_ISP_DOMAINS, ...IP_CHECK_DOMAINS]);
+const txOverlayDomains = new Set(TX_BULK_DOMAINS);
+
+const injectedProxies = [
+  {
+    name: "T-ISP1-TJ",
+    type: "trojan",
+    server: "TROJAN_DOMAIN_PLACEHOLDER",
+    port: TROJAN_PORT_PLACEHOLDER,
+    password: "TROJAN_PASSWORD_PLACEHOLDER",
+    udp: true,
+    sni: "TROJAN_DOMAIN_PLACEHOLDER",
+    alpn: ["h2", "http/1.1"],
+    "skip-cert-verify": false,
+    "client-fingerprint": "chrome",
+  },
+  {
+    name: "T-ISP1-HY2",
+    type: "hysteria2",
+    server: "HYSTERIA_DOMAIN_PLACEHOLDER",
+    port: HYSTERIA_PORT_PLACEHOLDER,
+    password: "HYSTERIA_PASSWORD_PLACEHOLDER",
+    obfs: "salamander",
+    "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
+    alpn: ["h3"],
+    sni: "HYSTERIA_DOMAIN_PLACEHOLDER",
+    "skip-cert-verify": false,
+    up: "HYSTERIA_UP_PLACEHOLDER Mbps",
+    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
+  },
+  ...(HAS_PROXY2_PLACEHOLDER
+    ? [
+        {
+          name: "T-ISP2-TJ",
+          type: "trojan",
+          server: "TROJAN_DOMAIN_PLACEHOLDER",
+          port: ISP2_TROJAN_PORT_PLACEHOLDER,
+          password: "TROJAN_PASSWORD_PLACEHOLDER",
+          udp: true,
+          sni: "TROJAN_DOMAIN_PLACEHOLDER",
+          alpn: ["h2", "http/1.1"],
+          "skip-cert-verify": false,
+          "client-fingerprint": "chrome",
+        },
+        {
+          name: "T-ISP2-HY2",
+          type: "hysteria2",
+          server: "HYSTERIA_DOMAIN_PLACEHOLDER",
+          port: ISP2_HYSTERIA_PORT_PLACEHOLDER,
+          password: "HYSTERIA_PASSWORD_PLACEHOLDER",
+          obfs: "salamander",
+          "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
+          alpn: ["h3"],
+          sni: "HYSTERIA_DOMAIN_PLACEHOLDER",
+          "skip-cert-verify": false,
+          up: "HYSTERIA_UP_PLACEHOLDER Mbps",
+          down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
+        },
+      ]
+    : []),
+  ...(J_ENABLED_PLACEHOLDER
+    ? [
+        {
+          name: "J-ISP1-TJ",
+          type: "trojan",
+          server: "J_TROJAN_DOMAIN_PLACEHOLDER",
+          port: TROJAN_PORT_PLACEHOLDER,
+          password: "TROJAN_PASSWORD_PLACEHOLDER",
+          udp: true,
+          sni: "J_TROJAN_DOMAIN_PLACEHOLDER",
+          alpn: ["h2", "http/1.1"],
+          "skip-cert-verify": false,
+          "client-fingerprint": "chrome",
+        },
+        {
+          name: "J-ISP1-HY2",
+          type: "hysteria2",
+          server: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
+          port: HYSTERIA_PORT_PLACEHOLDER,
+          password: "HYSTERIA_PASSWORD_PLACEHOLDER",
+          obfs: "salamander",
+          "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
+          alpn: ["h3"],
+          sni: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
+          "skip-cert-verify": false,
+          up: "HYSTERIA_UP_PLACEHOLDER Mbps",
+          down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
+        },
+      ]
+    : []),
+  ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER
+    ? [
+        {
+          name: "J-ISP2-TJ",
+          type: "trojan",
+          server: "J_TROJAN_DOMAIN_PLACEHOLDER",
+          port: ISP2_TROJAN_PORT_PLACEHOLDER,
+          password: "TROJAN_PASSWORD_PLACEHOLDER",
+          udp: true,
+          sni: "J_TROJAN_DOMAIN_PLACEHOLDER",
+          alpn: ["h2", "http/1.1"],
+          "skip-cert-verify": false,
+          "client-fingerprint": "chrome",
+        },
+        {
+          name: "J-ISP2-HY2",
+          type: "hysteria2",
+          server: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
+          port: ISP2_HYSTERIA_PORT_PLACEHOLDER,
+          password: "HYSTERIA_PASSWORD_PLACEHOLDER",
+          obfs: "salamander",
+          "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
+          alpn: ["h3"],
+          sni: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
+          "skip-cert-verify": false,
+          up: "HYSTERIA_UP_PLACEHOLDER Mbps",
+          down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
+        },
+      ]
+    : []),
+];
+
+const txNodeNames = injectedProxies
+  .map((proxy) => proxy.name)
+  .filter((name) => name.startsWith("T-"));
+const finalNodeNames = injectedProxies.map((proxy) => proxy.name);
+const injectedNodeNames = new Set(finalNodeNames);
+
+function ruleProvider(name, behavior) {
+  return {
+    type: "http",
+    behavior,
+    format: "yaml",
+    url: `${RULESET_BASE_URL}/${name}.txt`,
+    path: `./ruleset/loyalsoldier/${name}.yaml`,
+    interval: 86400,
+    proxy: FINAL_GROUP_NAME,
+  };
+}
+
+const loyalsoldierProviders = {
+  "loyalsoldier-applications": ruleProvider("applications", "classical"),
+  "loyalsoldier-private": ruleProvider("private", "domain"),
+  "loyalsoldier-reject": ruleProvider("reject", "domain"),
+  "loyalsoldier-icloud": ruleProvider("icloud", "domain"),
+  "loyalsoldier-apple": ruleProvider("apple", "domain"),
+  "loyalsoldier-proxy": ruleProvider("proxy", "domain"),
+  "loyalsoldier-direct": ruleProvider("direct", "domain"),
+  "loyalsoldier-lancidr": ruleProvider("lancidr", "ipcidr"),
+  "loyalsoldier-cncidr": ruleProvider("cncidr", "ipcidr"),
+  "loyalsoldier-telegramcidr": ruleProvider("telegramcidr", "ipcidr"),
+};
+
+function rewriteAirportRules(rules, replaceableTargets) {
+  if (!Array.isArray(rules)) return [];
+
+  return rules.flatMap((rule) => {
+    if (typeof rule !== "string") return [rule];
+    if (rule.startsWith("RULE-SET,loyalsoldier-")) return [];
+    if (rule === "GEOIP,LAN,DIRECT" || rule === "GEOIP,CN,DIRECT") return [];
+
+    const parts = rule.split(",");
+    const type = parts[0].trim().toUpperCase();
+    if (type === "MATCH" || type === "FINAL") return [];
+    if (parts.length < 2) return [rule];
+
+    if (type === "DOMAIN-SUFFIX" && parts.length >= 3) {
+      const domain = parts[1].trim();
+      const target = parts[parts.length - 1].trim();
+      if (target === FINAL_GROUP_NAME && finalOverlayDomains.has(domain)) return [];
+      if (target === TX_GROUP_NAME && txOverlayDomains.has(domain)) return [];
+    }
+
+    const lastPart = parts[parts.length - 1].trim();
+    const hasNoResolve = lastPart === "no-resolve";
+    const targetIndex = hasNoResolve ? parts.length - 2 : parts.length - 1;
+    const target = parts[targetIndex].trim();
+    if (replaceableTargets.has(target)) {
+      parts[targetIndex] = FINAL_GROUP_NAME;
+    }
+    return [parts.join(",")];
+  });
+}
+
+function main(config) {
+  config = config || {};
+  const sourceProxies = Array.isArray(config.proxies) ? config.proxies : [];
+  const sourceGroups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];
+  const sourceRuleProviders = config["rule-providers"] || {};
+  const sourceProxyProviders = config["proxy-providers"] || {};
+
+  const airportProxies = sourceProxies.filter(
+    (proxy) => proxy && proxy.name && !injectedNodeNames.has(proxy.name),
+  );
+  const airportProxyNames = [...new Set(airportProxies.map((proxy) => proxy.name))];
+  const originalGroups = sourceGroups.filter(
+    (group) => group && group.name && !CUSTOM_GROUP_NAMES.has(group.name),
+  );
+  const originalGroupNames = originalGroups.map((group) => group.name);
+  const replaceableTargets = new Set([...airportProxyNames, ...originalGroupNames]);
+  const upstreamProviderNames = new Set(Object.keys(loyalsoldierProviders));
+  const airportProviderNames = Object.keys(sourceProxyProviders).filter(
+    (name) => !upstreamProviderNames.has(name),
+  );
+
+  const transitGroup = {
+    name: TRANSIT_GROUP_NAME,
+    type: "select",
+  };
+  if (airportProxyNames.length > 0) transitGroup.proxies = airportProxyNames;
+  if (airportProviderNames.length > 0) transitGroup.use = airportProviderNames;
+  if (airportProxyNames.length === 0 && airportProviderNames.length === 0) {
+    transitGroup.proxies = ["DIRECT"];
+  }
+
+  config.proxies = [
+    ...airportProxies,
+    ...injectedProxies.map((proxy) => ({
+      ...proxy,
+      "dialer-proxy": TRANSIT_GROUP_NAME,
+    })),
+  ];
+  config["proxy-groups"] = [
+    {
+      name: FINAL_GROUP_NAME,
+      type: "fallback",
+      proxies: finalNodeNames,
+      url: "https://cp.cloudflare.com/generate_204",
+      interval: 300,
+      timeout: 5000,
+    },
+    {
+      name: TX_GROUP_NAME,
+      type: "fallback",
+      proxies: txNodeNames,
+      url: "https://www.youtube.com/generate_204",
+      interval: 300,
+      timeout: 5000,
+    },
+    transitGroup,
+    ...originalGroups,
+  ];
+  config["rule-providers"] = {
+    ...sourceRuleProviders,
+    ...loyalsoldierProviders,
+  };
+
+  const airportRules = rewriteAirportRules(config.rules, replaceableTargets);
+  config.rules = [
+    ...AI_ISP_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
+    ...IP_CHECK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
+    ...TX_BULK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${TX_GROUP_NAME}`),
+    "RULE-SET,loyalsoldier-applications,DIRECT",
+    "RULE-SET,loyalsoldier-private,DIRECT",
+    "RULE-SET,loyalsoldier-reject,REJECT",
+    "RULE-SET,loyalsoldier-icloud,DIRECT",
+    "RULE-SET,loyalsoldier-apple,DIRECT",
+    `RULE-SET,loyalsoldier-telegramcidr,${FINAL_GROUP_NAME},no-resolve`,
+    `RULE-SET,loyalsoldier-proxy,${FINAL_GROUP_NAME}`,
+    "RULE-SET,loyalsoldier-direct,DIRECT",
+    ...airportRules,
+    "RULE-SET,loyalsoldier-lancidr,DIRECT,no-resolve",
+    "RULE-SET,loyalsoldier-cncidr,DIRECT,no-resolve",
+    "GEOIP,LAN,DIRECT",
+    "GEOIP,CN,DIRECT",
+    `MATCH,${FINAL_GROUP_NAME}`,
+  ];
+
+  return config;
+}
+GLOBALJS
+
   # 替换 c.js 中的占位符
   # 生成或获取 secret
   local secret="${SECRET:-}"
@@ -1786,11 +2098,15 @@ CJS
   local sub_remarks_lower=$(echo "${SUB_REMARKS:-US-ISP}" | tr '[:upper:]' '[:lower:]')
   local ai_isp_domains_base64
   local direct_bulk_domains_base64
+  local ai_isp_domains_json
+  local direct_bulk_domains_json='[]'
   local direct_bulk_enabled_js=false
   ai_isp_domains_base64=$(printf '%s' "${AI_ISP_DOMAINS}" | base64 | tr -d '\n')
   direct_bulk_domains_base64=$(printf '%s' "${DIRECT_BULK_DOMAINS}" | base64 | tr -d '\n')
+  ai_isp_domains_json=$(jq -cn --arg domains "${AI_ISP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   if is_true "${DIRECT_BULK_ENABLED}"; then
     direct_bulk_enabled_js=true
+    direct_bulk_domains_json=$(jq -cn --arg domains "${DIRECT_BULK_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   fi
   
   sed -i "s|SECRET_PLACEHOLDER|${secret}|g" "${functions_dir}/c.js"
@@ -1816,6 +2132,25 @@ CJS
   sed -i "s|J_ENABLED_PLACEHOLDER|$([[ ${HAS_VPS_J} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${functions_dir}/c.js"
+
+  sed -i "s|AI_ISP_DOMAINS_JSON_PLACEHOLDER|${ai_isp_domains_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|${direct_bulk_domains_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|J_TROJAN_DOMAIN_PLACEHOLDER|${J_TROJAN_DOMAIN:-}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|J_HYSTERIA_DOMAIN_PLACEHOLDER|${J_HYSTERIA_DOMAIN:-}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|ISP2_TROJAN_PORT_PLACEHOLDER|${ISP2_TROJAN_PORT}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|ISP2_HYSTERIA_PORT_PLACEHOLDER|${ISP2_HYSTERIA_PORT}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${TROJAN_PASSWORD}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${HYSTERIA_PASSWORD}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${HYSTERIA_OBFS_PASSWORD}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HAS_PROXY2_PLACEHOLDER|$([[ ${HAS_PROXY2} -eq 1 ]] && echo true || echo false)|g" "${pages_dir}/global-extension.js"
+  sed -i "s|J_ENABLED_PLACEHOLDER|$([[ ${HAS_VPS_J} -eq 1 ]] && echo true || echo false)|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${pages_dir}/global-extension.js"
   
   # 生成 _redirects（每次重建，确保隐藏路径始终最新）
   cat > "${pages_dir}/_redirects" <<REDIRECTS
@@ -1830,6 +2165,9 @@ CJS
 
 # Clash 订阅接口
 /c /c 200
+
+# Clash Verge 全局扩展脚本
+/s /global-extension.js 200
 REDIRECTS
 
   log_success "订阅配置文件已更新"
@@ -1848,6 +2186,7 @@ REDIRECTS
     log_success "Cloudflare Pages 部署完成"
     log_info "订阅链接: https://${SUB_DOMAIN}/v2 (v2rayN)"
     log_info "订阅链接: https://${SUB_DOMAIN}/c (Clash)"
+    log_info "全局扩展脚本: https://${SUB_DOMAIN}/s (Clash Verge)"
     
     # 验证订阅
     verify_subscription

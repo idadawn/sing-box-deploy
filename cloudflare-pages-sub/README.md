@@ -1,6 +1,6 @@
 # Cloudflare Pages 订阅托管
 
-这个目录将 v2rayN 和 Clash 订阅配置托管在 Cloudflare Pages 上。`functions/v2.js` 和 `functions/c.js` 由根目录的 `install.sh` 动态生成并部署，无需手动编辑。
+这个目录将 v2rayN、Clash 订阅和 Clash Verge 全局扩展脚本托管在 Cloudflare Pages 上。相关文件由根目录的 `install.sh` 动态生成并部署，无需手动编辑。
 
 - `Clash` 订阅内置 T/J 接入容灾与 ISP-1/ISP-2 出口容灾
 - `v2rayN / v2rayNG` 订阅直接提供 `T-ISP1/T-ISP2` 与可选 `J-ISP1/J-ISP2` 手动节点
@@ -14,6 +14,7 @@
 
 - **v2rayN**: `https://<SUB_DOMAIN>/v2`
 - **Clash**: `https://<SUB_DOMAIN>/c`
+- **Clash Verge 全局扩展脚本**: `https://<SUB_DOMAIN>/s`
 
 其中 `SUB_DOMAIN` 在根目录 `.env` 中配置。
 
@@ -25,6 +26,7 @@ cloudflare-pages-sub/
 │   ├── v2.js            # v2rayN 订阅接口 (/v2)
 │   └── c.js             # Clash 订阅接口 (/c)
 ├── _redirects           # 重定向规则（由 install.sh 生成）
+├── global-extension.js  # 任意机场的全局扩展脚本（由 install.sh 生成）
 ├── index.html           # 订阅入口页面
 ├── package.json         # 项目配置
 ├── wrangler.toml        # Wrangler 配置
@@ -73,3 +75,11 @@ wrangler pages deploy . --project-name="sub-converter" --branch=main
 2. 订阅 URL 填写 `https://<SUB_DOMAIN>/c`
 3. 下载并启用
 4. 默认选择 `🛡️ 自动容灾` 或 `♻️ 自动选择`，即可在 T/J 中继节点与 ISP-1/ISP-2 出口之间切换；大流量规则会自动使用 `📦 TX 大流量`
+
+### Clash Verge + 第三方机场
+
+1. 打开 `https://<SUB_DOMAIN>/s`
+2. 将完整内容粘贴到 Clash Verge 的“全局扩展脚本”
+3. 保存并更新任意机场配置
+
+脚本将机场节点用于 `🛫 机场中转`，最终网站出口固定为 T/J 后端的 ISP，或显式允许的 T 公网直出。
