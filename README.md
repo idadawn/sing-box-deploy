@@ -52,7 +52,8 @@ nano .env   # 填写所有必填项
 | `AI_ISP_DOMAINS` | 可选，始终走 ISP 自动出口的 AI 域名清单；留空使用内置清单 |
 | `DIRECT_BULK_ENABLED` | 是否让视频/CDN/软件下载从当前服务器直出；建议仅 T 设置为 `true` |
 | `DIRECT_BULK_DOMAINS` | 可选，直出域名清单；留空使用内置清单 |
-| `CLASH_RULESET_BASE_URL` | 可选，Loyalsoldier `release` 规则地址；留空使用 GitHub Raw |
+| `CLASH_RULESET_BASE_URL` | 可选，客户端规则地址；留空使用 `https://<SUB_DOMAIN>/rules` 自托管镜像 |
+| `CLASH_RULESET_UPSTREAM_REPO/BRANCH` | 可选，每日同步的上游仓库与分支，默认 Loyalsoldier `release` |
 | `TROJAN_PASSWORD` | Trojan 入站密码 |
 | `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
 | `CF_API_TOKEN` + `CF_ACCOUNT_ID` | Cloudflare Pages 部署凭据 |
@@ -74,7 +75,8 @@ sudo ./install.sh
 3. 生成并部署 `/etc/sing-box/config.json`
 4. 配置 UFW 防火墙
 5. 生成订阅文件并部署到 Cloudflare Pages
-6. 可选启用 systemd 定时出口监控与 SMTP 邮件告警
+6. 启用每日 Loyalsoldier 规则同步定时器
+7. 可选启用 systemd 定时出口监控与 SMTP 邮件告警
 
 ### 3. 客户端订阅
 
@@ -89,7 +91,8 @@ sudo ./install.sh
 - AI 域名在服务端优先匹配 `ai-out`，只会在 ISP-1/ISP-2 之间选择，不会落到服务器直出
 - 如需同时使用任意第三方机场，将 `/s` 的内容粘贴到 Clash Verge 的全局扩展脚本。脚本会把原机场节点放入 `🛫 机场中转`，并让注入的 T/J 节点通过该组建立连接；机场不会成为网站最终出口
 - `DIRECT_BULK_ENABLED=true` 时，仅内置或自定义的视频/CDN/软件下载域名使用当前服务器公网 IP；J 默认关闭该能力
-- Clash 通用规则通过 `rule-providers` 每天更新；自定义 AI 与 TX 大流量规则始终优先于上游通用规则
+- 服务端每天在北京时间 07:15 后同步 Loyalsoldier `release`，全部文件校验通过后才替换并发布；客户端通过 `rule-providers` 每天读取自托管镜像
+- 自定义 AI 与 TX 大流量规则始终优先于上游通用规则
 - Clash 订阅默认关闭 IPv6，并保留 Apple / iCloud 分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
 
 ### 服务端分流优先级
@@ -136,6 +139,13 @@ curl --socks5 USER:PASS@HOST:PORT https://ipinfo.io/ip
 
 # 手动部署 Cloudflare Pages 订阅
 cd cloudflare-pages-sub && wrangler pages deploy .
+
+# 立即同步规则并发布（定时服务也执行这条命令）
+sudo ./sync-clash-rules.sh --deploy
+
+# 查看每日同步计划与日志
+systemctl list-timers clash-rules-sync.timer
+journalctl -u clash-rules-sync.service -n 100 --no-pager
 ```
 
 ## 安装选项
@@ -152,6 +162,8 @@ sudo ./install.sh --no-start         # 仅部署配置，不启动服务
 ```
 sing-box-deploy/
 ├── install.sh                        # 主部署脚本
+├── sync-clash-rules.sh               # 上游规则原子同步与 Pages 发布
+├── systemd/                           # 每日规则同步 service/timer 模板
 ├── manage.sh                         # 管理菜单
 ├── .env.example                      # 配置模板（复制为 .env 使用）
 ├── .env                              # 实际配置（已加入 .gitignore）
@@ -160,6 +172,7 @@ sing-box-deploy/
     │   ├── v2.js                     # v2rayN 订阅（由 install.sh 生成）
     │   └── c.js                      # Clash 订阅（由 install.sh 生成）
     ├── global-extension.js           # Clash Verge 全局扩展脚本（由 install.sh 生成）
+    ├── rules/                         # 已校验的 Loyalsoldier 快照（定时生成）
     ├── _redirects                    # 重定向规则（由 install.sh 生成）
     ├── index.html                    # Pages 占位页
     ├── wrangler.toml                 # Wrangler 配置

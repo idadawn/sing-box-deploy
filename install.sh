@@ -54,7 +54,9 @@ DEFAULT_DIRECT_BULK_DOMAINS+=",huggingface.co,hf.co,huggingfaceusercontent.com,h
 DEFAULT_DIRECT_BULK_DOMAINS+=",1drv.com,1drv.ms,livefilestore.com,oneclient.sfx.ms,onedrive.com,onedrive.live.com,photos.live.com,skydrive.wns.windows.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",sharepoint.com,sharepointonline.com,spoprod-a.akamaihd.net,storage.live.com,storage.msn.com"
 
-DEFAULT_CLASH_RULESET_BASE_URL="https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release"
+DEFAULT_CLASH_RULESET_UPSTREAM_REPO="https://github.com/Loyalsoldier/clash-rules.git"
+DEFAULT_CLASH_RULESET_UPSTREAM_BRANCH="release"
+DEFAULT_CLASH_RULESET_FALLBACK_URL="https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release"
 
 # -----------------------------
 # 颜色
@@ -253,7 +255,16 @@ load_env() {
   AI_ISP_DOMAINS="${AI_ISP_DOMAINS:-${DEFAULT_AI_ISP_DOMAINS}}"
   DIRECT_BULK_ENABLED="${DIRECT_BULK_ENABLED:-false}"
   DIRECT_BULK_DOMAINS="${DIRECT_BULK_DOMAINS:-${DEFAULT_DIRECT_BULK_DOMAINS}}"
-  CLASH_RULESET_BASE_URL="${CLASH_RULESET_BASE_URL:-${DEFAULT_CLASH_RULESET_BASE_URL}}"
+  CLASH_RULESET_UPSTREAM_REPO="${CLASH_RULESET_UPSTREAM_REPO:-${DEFAULT_CLASH_RULESET_UPSTREAM_REPO}}"
+  CLASH_RULESET_UPSTREAM_BRANCH="${CLASH_RULESET_UPSTREAM_BRANCH:-${DEFAULT_CLASH_RULESET_UPSTREAM_BRANCH}}"
+  if [[ -z "${CLASH_RULESET_BASE_URL:-}" ]]; then
+    if [[ -n "${SUB_DOMAIN:-}" ]]; then
+      CLASH_RULESET_BASE_URL="https://${SUB_DOMAIN}/rules"
+    else
+      CLASH_RULESET_BASE_URL="${DEFAULT_CLASH_RULESET_FALLBACK_URL}"
+    fi
+  fi
+  CF_PAGES_PROJECT="${CF_PAGES_PROJECT:-sub-converter}"
   LOG_LEVEL="${LOG_LEVEL:-info}"
   SSH_PORT="${SSH_PORT:-22}"
   ENABLE_UFW="${ENABLE_UFW:-true}"
@@ -403,7 +414,7 @@ install_dependencies() {
   log_info "安装基础依赖..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y curl jq ca-certificates gnupg ufw
+  apt-get install -y curl git jq ca-certificates gnupg ufw
   log_success "基础依赖安装完成"
 }
 
@@ -1143,6 +1154,9 @@ verify_subscription() {
   local v2_ok=0
   local c_ok=0
   local script_ok=0
+  local rules_ok=0
+  local c_content=""
+  local script_content=""
   
   # 等待几秒让部署生效
   sleep 2
@@ -1166,8 +1180,8 @@ verify_subscription() {
     
     # 验证 Clash 订阅
     if [[ $c_ok -eq 0 ]]; then
-      local c_content=$(curl -sL --max-time 10 "https://${domain}/c" 2>/dev/null)
-      if grep -q "proxies:" <<< "$c_content"; then
+      c_content=$(curl -sL --max-time 10 "https://${domain}/c" 2>/dev/null)
+      if grep -q "proxies:" <<< "$c_content" && grep -Fq "${CLASH_RULESET_BASE_URL%/}/proxy.txt" <<< "$c_content"; then
         local c_node_count=$(grep -c "name:" <<< "$c_content")
         log_success "Clash 订阅正常: 发现 ${c_node_count} 个节点"
         c_ok=1
@@ -1178,17 +1192,29 @@ verify_subscription() {
 
     # 验证 Clash Verge 全局扩展脚本
     if [[ $script_ok -eq 0 ]]; then
-      local script_content=$(curl -sL --max-time 10 "https://${domain}/s" 2>/dev/null)
-      if grep -q "function main(config)" <<< "$script_content" && grep -q '"dialer-proxy"' <<< "$script_content"; then
+      script_content=$(curl -sL --max-time 10 "https://${domain}/s" 2>/dev/null)
+      if grep -q "function main(config)" <<< "$script_content" && grep -q '"dialer-proxy"' <<< "$script_content" && grep -Fq "${CLASH_RULESET_BASE_URL%/}" <<< "$script_content"; then
         log_success "Clash Verge 全局扩展脚本正常"
         script_ok=1
       else
         log_warn "Clash Verge 全局扩展脚本验证失败，重试..."
       fi
     fi
+
+    # 元数据仅在全部规则文件校验成功后生成，可作为线上快照完整性标记。
+    if [[ $rules_ok -eq 0 ]]; then
+      local rules_metadata
+      rules_metadata=$(curl -sL --max-time 10 "https://${domain}/rules/metadata.json" 2>/dev/null)
+      if jq -e '(.upstream_sha | strings | test("^[0-9a-f]{40}$")) and (.files | length == 10)' <<< "$rules_metadata" >/dev/null 2>&1; then
+        log_success "Loyalsoldier 规则镜像正常"
+        rules_ok=1
+      else
+        log_warn "Loyalsoldier 规则镜像验证失败，重试..."
+      fi
+    fi
     
     # 都成功则退出
-    if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 ]]; then
+    if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $rules_ok -eq 1 ]]; then
       log_success "订阅验证全部通过！"
       return 0
     fi
@@ -1209,8 +1235,53 @@ verify_subscription() {
   if [[ $script_ok -eq 0 ]]; then
     log_error "Clash Verge 全局扩展脚本验证失败: https://${domain}/s"
   fi
+  if [[ $rules_ok -eq 0 ]]; then
+    log_error "Loyalsoldier 规则镜像验证失败: https://${domain}/rules/metadata.json"
+  fi
   log_info "请检查: 1) DNS 解析 2) Cloudflare Pages 部署状态 3) 自定义域名绑定"
   return 1
+}
+
+sync_clash_rules_snapshot() {
+  local sync_script="${SCRIPT_DIR}/sync-clash-rules.sh"
+  [[ -x "${sync_script}" ]] || {
+    log_error "规则同步脚本不存在或不可执行: ${sync_script}"
+    return 1
+  }
+
+  log_info "同步 Loyalsoldier ${CLASH_RULESET_UPSTREAM_BRANCH} 规则快照..."
+  CLASH_RULESET_OUTPUT_DIR="${SCRIPT_DIR}/cloudflare-pages-sub/rules" \
+    "${sync_script}" --env "${ENV_FILE}"
+}
+
+setup_clash_rules_sync_timer() {
+  if [[ -z "${CF_API_TOKEN:-}" || -z "${CF_ACCOUNT_ID:-}" ]]; then
+    log_warn "Cloudflare Pages 凭据不完整，跳过规则同步定时器"
+    return 0
+  fi
+  if ! command -v wrangler >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
+    log_warn "缺少 wrangler 或 systemctl，跳过规则同步定时器"
+    return 0
+  fi
+
+  local service_template="${SCRIPT_DIR}/systemd/clash-rules-sync.service.in"
+  local timer_template="${SCRIPT_DIR}/systemd/clash-rules-sync.timer"
+  local service_path="/etc/systemd/system/clash-rules-sync.service"
+  local timer_path="/etc/systemd/system/clash-rules-sync.timer"
+
+  [[ -f "${service_template}" && -f "${timer_template}" ]] || {
+    log_error "缺少 Clash 规则同步 systemd 模板"
+    return 1
+  }
+
+  sed \
+    -e "s|@SCRIPT_DIR@|${SCRIPT_DIR}|g" \
+    -e "s|@ENV_FILE@|${ENV_FILE}|g" \
+    "${service_template}" > "${service_path}"
+  install -m 0644 "${timer_template}" "${timer_path}"
+  systemctl daemon-reload
+  systemctl enable --now clash-rules-sync.timer
+  log_success "已启用每日 Clash 规则同步定时器（北京时间 07:15，随机延迟不超过 10 分钟）"
 }
 
 # -----------------------------
@@ -1240,6 +1311,9 @@ update_cloudflare_pages() {
   fi
 
   log_info "开始更新 Cloudflare Pages 订阅配置..."
+
+  # 客户端只读取完整镜像；同步失败时保留旧快照并停止本次 Pages 部署。
+  sync_clash_rules_snapshot
 
   # 确保 functions 目录存在
   mkdir -p "$functions_dir"
@@ -2182,7 +2256,7 @@ REDIRECTS
   log_info "开始部署到 Cloudflare Pages..."
   
   # 执行部署
-  if (cd "$pages_dir" && GIT_OPTIONAL_LOCKS=0 CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="sub-converter" --branch=main 2>&1); then
+  if (cd "$pages_dir" && GIT_OPTIONAL_LOCKS=0 CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="${CF_PAGES_PROJECT}" --branch=main 2>&1); then
     log_success "Cloudflare Pages 部署完成"
     log_info "订阅链接: https://${SUB_DOMAIN}/v2 (v2rayN)"
     log_info "订阅链接: https://${SUB_DOMAIN}/c (Clash)"
@@ -2193,6 +2267,7 @@ REDIRECTS
   else
     log_error "Cloudflare Pages 部署失败"
     log_info "请手动执行: cd ${pages_dir} && wrangler pages deploy ."
+    return 1
   fi
 }
 
@@ -2217,6 +2292,7 @@ main() {
   
   # 自动更新并部署 Cloudflare Pages 订阅配置
   update_cloudflare_pages
+  setup_clash_rules_sync_timer
 }
 
 main "$@"

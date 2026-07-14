@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Loyalsoldier Clash rules update
+
+[Timer]
+OnCalendar=*-*-* 07:15:00 Asia/Shanghai
+RandomizedDelaySec=10m
+Persistent=true
+AccuracySec=1m
+Unit=clash-rules-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Sync Loyalsoldier Clash rules and publish Cloudflare Pages
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=@SCRIPT_DIR@
+Environment=HOME=/root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=@ENV_FILE@
+ExecStart=@SCRIPT_DIR@/sync-clash-rules.sh --deploy --env @ENV_FILE@
+UMask=0077
+Nice=10
