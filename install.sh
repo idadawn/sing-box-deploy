@@ -348,20 +348,11 @@ validate_config() {
     exit 1
   fi
 
-  # 可选：备用 J 中继服务器域名验证
+  # J 服务器已退役：禁止旧配置重新把不可用的 J 节点写回订阅。
   HAS_VPS_J=0
   if [[ -n "${J_TROJAN_DOMAIN:-}" || -n "${J_HYSTERIA_DOMAIN:-}" ]]; then
-    if [[ -z "${J_TROJAN_DOMAIN:-}" || -z "${J_HYSTERIA_DOMAIN:-}" ]]; then
-      log_error "启用 J 中继服务器时，必须同时设置 J_TROJAN_DOMAIN 和 J_HYSTERIA_DOMAIN"
-      exit 1
-    fi
-    validate_domain_like "J_TROJAN_DOMAIN" "${J_TROJAN_DOMAIN}"
-    validate_domain_like "J_HYSTERIA_DOMAIN" "${J_HYSTERIA_DOMAIN}"
-    if [[ "${J_TROJAN_DOMAIN}" == "${J_HYSTERIA_DOMAIN}" ]]; then
-      log_error "J_TROJAN_DOMAIN 和 J_HYSTERIA_DOMAIN 不应相同"
-      exit 1
-    fi
-    HAS_VPS_J=1
+    log_error "J 服务器已退役；请从 .env 中删除 J_TROJAN_DOMAIN 和 J_HYSTERIA_DOMAIN 后重试"
+    exit 1
   fi
 
   validate_port "TROJAN_PORT" "${TROJAN_PORT}"
@@ -1095,8 +1086,8 @@ ISP-1: SOCKS5 (${PROXY_HOST}:${PROXY_PORT})
 ISP-2: ${PROXY2_HOST:-未配置}
 AI 域名: 强制使用 ISP 自动出口
 视频/软件下载直出: ${DIRECT_BULK_ENABLED}
-Clash 自动容灾: T-ISP1 -> T-ISP2 -> J-ISP1 -> J-ISP2
-v2rayN/v2rayNG: 可手动选择 T-ISP1 / T-ISP2 / J-ISP1 / J-ISP2 节点
+Clash 自动容灾: T-ISP1 -> T-ISP2
+v2rayN/v2rayNG: 可手动选择 T-ISP1 / T-ISP2 节点
 
 [接入端口]
 ISP-1 Trojan: ${TROJAN_PORT}
@@ -1132,8 +1123,8 @@ show_final_info() {
   fi
   echo "AI 域名策略: ISP 自动出口"
   echo "视频/下载直出: ${DIRECT_BULK_ENABLED}"
-  echo "Clash 容灾 : T-ISP1 -> T-ISP2 -> J-ISP1 -> J-ISP2"
-  echo "v2 手选节点: T-ISP1 / T-ISP2 / J-ISP1 / J-ISP2"
+  echo "Clash 容灾 : T-ISP1 -> T-ISP2"
+  echo "v2 手选节点: T-ISP1 / T-ISP2"
   echo "配置文件   : ${CONFIG_PATH}"
   [[ -n "${BACKUP_CONFIG}" ]] && echo "配置备份   : ${BACKUP_CONFIG}"
   echo "日志命令   : journalctl -u sing-box -f"

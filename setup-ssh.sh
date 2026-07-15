@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 # =========================================================
 # SSH 免密登录配置脚本
-# 用法: bash setup-ssh.sh [别名] [IP/域名] [用户名] [端口]
-# 默认: bash setup-ssh.sh j 66.6.58.72 root 22
+# 用法: bash setup-ssh.sh <别名> <IP/域名> [用户名] [端口]
+# 不提供默认目标，避免误连已退役的服务器。
 # =========================================================
 
 RED='\033[0;31m'
@@ -18,9 +18,14 @@ log_ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_err()   { echo -e "${RED}[ERR]${NC} $*" >&2; }
 
-# 参数解析（带默认值）
-HOST_ALIAS="${1:-j}"
-HOST_IP="${2:-66.6.58.72}"
+# 参数解析
+if (( $# < 2 || $# > 4 )); then
+  log_err "用法: bash setup-ssh.sh <别名> <IP/域名> [用户名] [端口]"
+  exit 2
+fi
+
+HOST_ALIAS="$1"
+HOST_IP="$2"
 HOST_USER="${3:-root}"
 HOST_PORT="${4:-22}"
 
