@@ -1226,14 +1226,18 @@ verify_subscription() {
     # 基础入口通过后，逐个验证私有 ISP 订阅只包含对应节点。
     if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $rules_ok -eq 1 ]]; then
       local personal_ok=1
-      local index id personal_v2 personal_c
+      local index id personal_v2 personal_c personal_c_profile
       for ((index = 0; index < ISP_COUNT; index++)); do
         id="${ISP_IDS[index]}"
         personal_v2=$(curl -sL --max-time 10 "https://${domain}/v2?isp=${id}&${verification_query}" 2>/dev/null | base64 -d 2>/dev/null)
         personal_c=$(curl -sL --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null)
+        personal_c_profile=$(curl -sL -D - -o /dev/null --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null \
+          | tr -d '\r' \
+          | awk -F': *' 'tolower($1) == "profile-title" {print $2; exit}')
         if [[ "$(grep -c "#T-${id}-" <<< "${personal_v2}" || true)" -ne 2 ]] \
           || ! grep -Fq "name: \"T-${id}-TJ\"" <<< "${personal_c}" \
-          || ! grep -Fq "name: \"T-${id}-HY2\"" <<< "${personal_c}"; then
+          || ! grep -Fq "name: \"T-${id}-HY2\"" <<< "${personal_c}" \
+          || [[ "${personal_c_profile}" != "${id}" ]]; then
           log_warn "ISP ${id} 独立订阅验证失败，重试..."
           personal_ok=0
           break
@@ -1774,12 +1778,16 @@ ${txBulkRuleLines}
   const expire = entries.length > 0
     ? Math.floor(new Date(`${entries.map((entry) => entry.expires).sort()[0]}T23:59:59Z`).getTime() / 1000)
     : 0;
+  const profileName = requestedIsp || 'all-isps';
   return new Response(config, {
     status: 200,
     headers: { 
       'Content-Type': 'text/yaml; charset=utf-8', 
       'Cache-Control': 'no-cache', 
       'Access-Control-Allow-Origin': '*',
+      'Profile-Title': profileName,
+      'Profile-Update-Interval': '24',
+      'Content-Disposition': `attachment; filename="${profileName}.yaml"`,
       'Subscription-Userinfo': `upload=0; download=0; total=0; expire=${expire}`
     }
   });
@@ -2052,6 +2060,12 @@ GLOBALJS
   sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${pages_dir}/global-extension.js"
+
+  # 主页只公开订阅编号、到期日和独立链接，不包含 ISP 地址或凭据。
+  jq -cn \
+    --argjson entries "${ISP_PUBLIC_LIST_JSON}" \
+    '$entries | map({id, expires, v2: ("/v2?isp=" + .id), clash: ("/c?isp=" + .id)})' \
+    > "${pages_dir}/subscriptions.json"
   
   # 生成 _redirects（每次重建，确保隐藏路径始终最新）
   cat > "${pages_dir}/_redirects" <<REDIRECTS
@@ -2076,6 +2090,7 @@ REDIRECTS
     "${functions_dir}/v2.js" \
     "${functions_dir}/c.js" \
     "${pages_dir}/global-extension.js" \
+    "${pages_dir}/subscriptions.json" \
     "${pages_dir}/_redirects"
 
   log_success "订阅配置文件已更新"
