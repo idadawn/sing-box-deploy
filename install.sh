@@ -54,6 +54,11 @@ DEFAULT_DIRECT_BULK_DOMAINS+=",huggingface.co,hf.co,huggingfaceusercontent.com,h
 DEFAULT_DIRECT_BULK_DOMAINS+=",1drv.com,1drv.ms,livefilestore.com,oneclient.sfx.ms,onedrive.com,onedrive.live.com,photos.live.com,skydrive.wns.windows.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",sharepoint.com,sharepointonline.com,spoprod-a.akamaihd.net,storage.live.com,storage.msn.com"
 
+DEFAULT_TELEGRAM_DOMAINS="telegram.org,t.me,telegram.me,telegram.dog"
+DEFAULT_TELEGRAM_IP_CIDRS="91.105.192.0/23,91.108.4.0/22,91.108.8.0/21,91.108.16.0/21,91.108.56.0/22"
+DEFAULT_TELEGRAM_IP_CIDRS+=",95.161.64.0/20,149.154.160.0/20,185.76.151.0/24"
+DEFAULT_TELEGRAM_IP_CIDRS+=",2001:67c:4e8::/48,2001:b28:f23c::/47,2001:b28:f23f::/48,2a0a:f280::/32"
+
 DEFAULT_CLASH_RULESET_UPSTREAM_REPO="https://github.com/Loyalsoldier/clash-rules.git"
 DEFAULT_CLASH_RULESET_UPSTREAM_BRANCH="release"
 DEFAULT_CLASH_RULESET_FALLBACK_URL="https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release"
@@ -167,6 +172,46 @@ is_true() {
   esac
 }
 
+csv_list_contains() {
+  local list="${1:-}"
+  local expected="${2,,}"
+  local item
+  while IFS= read -r item; do
+    item="$(trim "${item}")"
+    [[ -z "${item}" ]] && continue
+    [[ "${item,,}" == "${expected}" ]] && return 0
+  done < <(printf '%s' "${list}" | tr ',\t ' '\n')
+  return 1
+}
+
+append_csv_list() {
+  local current="${1:-}"
+  local extra="${2:-}"
+  if [[ -z "${current}" ]]; then
+    printf '%s' "${extra}"
+  elif [[ -z "${extra}" ]]; then
+    printf '%s' "${current}"
+  else
+    printf '%s,%s' "${current}" "${extra}"
+  fi
+}
+
+validate_direct_bulk_apps() {
+  local app
+  while IFS= read -r app; do
+    app="$(trim "${app}")"
+    [[ -z "${app}" ]] && continue
+    case "${app,,}" in
+      telegram) ;;
+      *)
+        log_error "DIRECT_BULK_APPS 包含不支持的应用: ${app}"
+        log_error "当前支持: telegram"
+        exit 1
+        ;;
+    esac
+  done < <(printf '%s' "${DIRECT_BULK_APPS:-}" | tr ',\t ' '\n')
+}
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     log_error "请使用 root 运行此脚本"
@@ -253,6 +298,12 @@ load_env() {
   AI_ISP_DOMAINS="${AI_ISP_DOMAINS:-${DEFAULT_AI_ISP_DOMAINS}}"
   DIRECT_BULK_ENABLED="${DIRECT_BULK_ENABLED:-false}"
   DIRECT_BULK_DOMAINS="${DIRECT_BULK_DOMAINS:-${DEFAULT_DIRECT_BULK_DOMAINS}}"
+  DIRECT_BULK_APPS="${DIRECT_BULK_APPS:-}"
+  DIRECT_BULK_IP_CIDRS="${DIRECT_BULK_IP_CIDRS:-}"
+  if csv_list_contains "${DIRECT_BULK_APPS}" "telegram"; then
+    DIRECT_BULK_DOMAINS="$(append_csv_list "${DIRECT_BULK_DOMAINS}" "${DEFAULT_TELEGRAM_DOMAINS}")"
+    DIRECT_BULK_IP_CIDRS="$(append_csv_list "${DIRECT_BULK_IP_CIDRS}" "${DEFAULT_TELEGRAM_IP_CIDRS}")"
+  fi
   CLASH_RULESET_UPSTREAM_REPO="${CLASH_RULESET_UPSTREAM_REPO:-${DEFAULT_CLASH_RULESET_UPSTREAM_REPO}}"
   CLASH_RULESET_UPSTREAM_BRANCH="${CLASH_RULESET_UPSTREAM_BRANCH:-${DEFAULT_CLASH_RULESET_UPSTREAM_BRANCH}}"
   if [[ -z "${CLASH_RULESET_BASE_URL:-}" ]]; then
@@ -487,6 +538,7 @@ validate_config() {
   validate_port "TROJAN_PORT" "${TROJAN_PORT}"
   validate_port "HYSTERIA_PORT" "${HYSTERIA_PORT}"
   validate_port "SSH_PORT" "${SSH_PORT}"
+  validate_direct_bulk_apps
   load_isp_list
 
   validate_positive_int "HYSTERIA_UP_MBPS" "${HYSTERIA_UP_MBPS}"
@@ -585,6 +637,7 @@ generate_config() {
     --arg hy2_obfs_password "${HYSTERIA_OBFS_PASSWORD}" \
     --arg ai_isp_domains "${AI_ISP_DOMAINS}" \
     --arg direct_bulk_domains "${DIRECT_BULK_DOMAINS}" \
+    --arg direct_bulk_ip_cidrs "${DIRECT_BULK_IP_CIDRS}" \
     --argjson isps "${ISP_LIST_JSON}" \
     --argjson direct_bulk_enabled "${direct_bulk_enabled_json}" \
     --argjson hy2_up_mbps "${HYSTERIA_UP_MBPS}" \
@@ -627,13 +680,23 @@ generate_config() {
 
     def direct_bulk_rules:
       domain_list($direct_bulk_domains) as $domains
-      | if $direct_bulk_enabled and (($domains | length) > 0) then
+      | domain_list($direct_bulk_ip_cidrs) as $ip_cidrs
+      | if $direct_bulk_enabled then
           [
-            {
-              inbound: client_inbounds,
-              domain_suffix: $domains,
-              outbound: "direct-out"
-            }
+            (if ($domains | length) > 0 then
+              {
+                inbound: client_inbounds,
+                domain_suffix: $domains,
+                outbound: "direct-out"
+              }
+            else empty end),
+            (if ($ip_cidrs | length) > 0 then
+              {
+                inbound: client_inbounds,
+                ip_cidr: $ip_cidrs,
+                outbound: "direct-out"
+              }
+            else empty end)
           ]
         else
           []
@@ -731,7 +794,10 @@ generate_config() {
           password: .password
         }] + [
         (
-          if $direct_bulk_enabled and ((domain_list($direct_bulk_domains) | length) > 0) then
+          if $direct_bulk_enabled and (
+            ((domain_list($direct_bulk_domains) | length) > 0) or
+            ((domain_list($direct_bulk_ip_cidrs) | length) > 0)
+          ) then
             {
               type: "direct",
               tag: "direct-out"
@@ -1113,6 +1179,7 @@ EOF
 
 AI 域名: 强制使用当前订阅对应 ISP
 视频/软件下载直出: ${DIRECT_BULK_ENABLED}
+大流量应用: ${DIRECT_BULK_APPS:-无}
 
 [文件]
 配置文件: ${CONFIG_PATH}
@@ -1142,6 +1209,7 @@ show_final_info() {
   done
   echo "AI 域名策略: 当前订阅对应 ISP"
   echo "视频/下载直出: ${DIRECT_BULK_ENABLED}"
+  echo "大流量应用: ${DIRECT_BULK_APPS:-无}"
   echo "独立订阅数量: ${ISP_COUNT}"
   echo "配置文件   : ${CONFIG_PATH}"
   [[ -n "${BACKUP_CONFIG}" ]] && echo "配置备份   : ${BACKUP_CONFIG}"
@@ -1191,7 +1259,14 @@ verify_subscription() {
     # 验证 Clash 订阅
     if [[ $c_ok -eq 0 ]]; then
       c_content=$(curl -sL --max-time 10 "https://${domain}/c?${verification_query}" 2>/dev/null)
-      if grep -q "proxies:" <<< "$c_content" && grep -Fq "${CLASH_RULESET_BASE_URL%/}/proxy.txt" <<< "$c_content"; then
+      local telegram_c_ok=1
+      if is_true "${DIRECT_BULK_ENABLED}" && csv_list_contains "${DIRECT_BULK_APPS}" "telegram" \
+        && ! grep -Fq 'RULE-SET,loyalsoldier-telegramcidr,📦 TX 大流量,no-resolve' <<< "$c_content"; then
+        telegram_c_ok=0
+      fi
+      if grep -q "proxies:" <<< "$c_content" \
+        && grep -Fq "${CLASH_RULESET_BASE_URL%/}/proxy.txt" <<< "$c_content" \
+        && (( telegram_c_ok == 1 )); then
         local c_node_count=$(grep -c "name:" <<< "$c_content")
         log_success "Clash 订阅正常: 发现 ${c_node_count} 个节点"
         c_ok=1
@@ -1203,7 +1278,15 @@ verify_subscription() {
     # 验证 Clash Verge 全局扩展脚本
     if [[ $script_ok -eq 0 ]]; then
       script_content=$(curl -sL --max-time 10 "https://${domain}/s?${verification_query}" 2>/dev/null)
-      if grep -q "function main(config)" <<< "$script_content" && grep -q '"dialer-proxy"' <<< "$script_content" && grep -Fq "${CLASH_RULESET_BASE_URL%/}" <<< "$script_content"; then
+      local telegram_script_ok=1
+      if is_true "${DIRECT_BULK_ENABLED}" && csv_list_contains "${DIRECT_BULK_APPS}" "telegram" \
+        && ! grep -Fq 'const DIRECT_BULK_APPS = ["telegram"]' <<< "$script_content"; then
+        telegram_script_ok=0
+      fi
+      if grep -q "function main(config)" <<< "$script_content" \
+        && grep -q '"dialer-proxy"' <<< "$script_content" \
+        && grep -Fq "${CLASH_RULESET_BASE_URL%/}" <<< "$script_content" \
+        && (( telegram_script_ok == 1 )); then
         log_success "Clash Verge 全局扩展脚本正常"
         script_ok=1
       else
@@ -1447,6 +1530,9 @@ export async function onRequest(context) {
   const txBulkDomains = DIRECT_BULK_ENABLED_PLACEHOLDER
     ? decodeDomainList("DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER")
     : [];
+  const directBulkApps = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
+  const telegramDirectEnabled = DIRECT_BULK_ENABLED_PLACEHOLDER
+    && directBulkApps.includes("telegram");
 
   const proxies = entries.flatMap((entry) => [
     `  - name: "T-${entry.id}-TJ"
@@ -1482,6 +1568,13 @@ export async function onRequest(context) {
   const selectProxyLines = [`      - "♻️ 自动选择"`, `      - "🛡️ 自动容灾"`, ...proxyNames.map((name) => `      - "${name}"`)].join('\n');
   const ispOnlySelectProxyLines = [`      - "🛡️ ISP 出口自动"`, ...ispOnlyProxyNames.map((name) => `      - "${name}"`)].join('\n');
   const fallbackProxyLines = ispOnlySelectProxyLines;
+  const telegramProxyLines = [
+    ...(telegramDirectEnabled ? [`      - "📦 TX 大流量"`] : []),
+    `      - "🚀 节点选择"`,
+    `      - "♻️ 自动选择"`,
+    `      - "🛡️ 自动容灾"`,
+  ].join('\n');
+  const telegramRuleTarget = telegramDirectEnabled ? "📦 TX 大流量" : "📲 电报信息";
   const aiRuleLines = aiIspDomains
     .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},🤖 AI 服务'`)
     .join('\n');
@@ -1700,9 +1793,7 @@ ${ispOnlyProxyGroupLines}
   - name: "📲 电报信息"
     type: select
     proxies:
-      - "🚀 节点选择"
-      - "♻️ 自动选择"
-      - "🛡️ 自动容灾"
+${telegramProxyLines}
 
   - name: "🔎 IP 信息"
     type: select
@@ -1766,7 +1857,7 @@ ${txBulkRuleLines}
     - 'RULE-SET,loyalsoldier-reject,REJECT'
     - 'RULE-SET,loyalsoldier-icloud,🍎 苹果服务'
     - 'RULE-SET,loyalsoldier-apple,🍎 苹果服务'
-    - 'RULE-SET,loyalsoldier-telegramcidr,📲 电报信息,no-resolve'
+    - 'RULE-SET,loyalsoldier-telegramcidr,${telegramRuleTarget},no-resolve'
     - 'RULE-SET,loyalsoldier-proxy,🚀 节点选择'
     - 'RULE-SET,loyalsoldier-direct,🎯 全球直连'
     - 'RULE-SET,loyalsoldier-lancidr,DIRECT,no-resolve'
@@ -1808,6 +1899,8 @@ const CUSTOM_GROUP_NAMES = new Set([
 
 const AI_ISP_DOMAINS = AI_ISP_DOMAINS_JSON_PLACEHOLDER;
 const TX_BULK_DOMAINS = DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER;
+const DIRECT_BULK_APPS = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
+const TELEGRAM_DIRECT_ENABLED = DIRECT_BULK_APPS.includes("telegram");
 const IP_CHECK_DOMAINS = [
   "ip.sb",
   "ipapi.co",
@@ -1990,7 +2083,7 @@ function main(config) {
     "RULE-SET,loyalsoldier-reject,REJECT",
     "RULE-SET,loyalsoldier-icloud,DIRECT",
     "RULE-SET,loyalsoldier-apple,DIRECT",
-    `RULE-SET,loyalsoldier-telegramcidr,${FINAL_GROUP_NAME},no-resolve`,
+    `RULE-SET,loyalsoldier-telegramcidr,${TELEGRAM_DIRECT_ENABLED ? TX_GROUP_NAME : FINAL_GROUP_NAME},no-resolve`,
     `RULE-SET,loyalsoldier-proxy,${FINAL_GROUP_NAME}`,
     "RULE-SET,loyalsoldier-direct,DIRECT",
     ...airportRules,
@@ -2024,6 +2117,7 @@ GLOBALJS
   local direct_bulk_domains_base64
   local ai_isp_domains_json
   local direct_bulk_domains_json='[]'
+  local direct_bulk_apps_json='[]'
   local direct_bulk_enabled_js=false
   ai_isp_domains_base64=$(printf '%s' "${AI_ISP_DOMAINS}" | base64 | tr -d '\n')
   direct_bulk_domains_base64=$(printf '%s' "${DIRECT_BULK_DOMAINS}" | base64 | tr -d '\n')
@@ -2031,6 +2125,7 @@ GLOBALJS
   if is_true "${DIRECT_BULK_ENABLED}"; then
     direct_bulk_enabled_js=true
     direct_bulk_domains_json=$(jq -cn --arg domains "${DIRECT_BULK_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
+    direct_bulk_apps_json=$(jq -cn --arg apps "${DIRECT_BULK_APPS}" '$apps | ascii_downcase | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   fi
   
   sed -i "s|SECRET_PLACEHOLDER|${secret}|g" "${functions_dir}/c.js"
@@ -2045,6 +2140,7 @@ GLOBALJS
   sed -i "s|AI_ISP_DOMAINS_BASE64_PLACEHOLDER|${ai_isp_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER|${direct_bulk_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_ENABLED_PLACEHOLDER|${direct_bulk_enabled_js}|g" "${functions_dir}/c.js"
+  sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${functions_dir}/c.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${functions_dir}/c.js"
   sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${functions_dir}/c.js"
@@ -2052,6 +2148,7 @@ GLOBALJS
 
   sed -i "s|AI_ISP_DOMAINS_JSON_PLACEHOLDER|${ai_isp_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|${direct_bulk_domains_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${pages_dir}/global-extension.js"
   sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${pages_dir}/global-extension.js"
