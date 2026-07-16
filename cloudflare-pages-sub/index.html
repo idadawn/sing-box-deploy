@@ -583,6 +583,7 @@
 
   <script>
     const base = `${window.location.protocol}//${window.location.host}`;
+    const homepageHiddenIds = new Set(['711']);
     const elements = {
       list: document.getElementById('nodeList'),
       count: document.getElementById('nodeCount'),
@@ -666,16 +667,20 @@
     }
 
     function renderSubscriptions(entries) {
-      if (!Array.isArray(entries) || entries.length === 0) {
+      const visibleEntries = Array.isArray(entries)
+        ? entries.filter((entry) => !homepageHiddenIds.has(entry.id))
+        : [];
+
+      if (visibleEntries.length === 0) {
         throw new Error('No active subscriptions');
       }
 
-      subscriptions = entries;
-      elements.list.replaceChildren(...entries.map(createNodeButton));
-      elements.count.textContent = `${entries.length} 个可用`;
+      subscriptions = visibleEntries;
+      elements.list.replaceChildren(...visibleEntries.map(createNodeButton));
+      elements.count.textContent = `${visibleEntries.length} 个可用`;
 
       const requestedId = new URL(window.location.href).searchParams.get('isp');
-      const initialEntry = entries.find((entry) => entry.id === requestedId) || entries[0];
+      const initialEntry = visibleEntries.find((entry) => entry.id === requestedId) || visibleEntries[0];
       selectSubscription(initialEntry.id, requestedId !== initialEntry.id);
     }
 
