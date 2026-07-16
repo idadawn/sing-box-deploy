@@ -180,7 +180,7 @@ csv_list_contains() {
     item="$(trim "${item}")"
     [[ -z "${item}" ]] && continue
     [[ "${item,,}" == "${expected}" ]] && return 0
-  done < <(printf '%s' "${list}" | tr ',\t ' '\n')
+  done < <(printf '%s\n' "${list}" | tr ',\t ' '\n')
   return 1
 }
 
@@ -209,7 +209,7 @@ validate_direct_bulk_apps() {
         exit 1
         ;;
     esac
-  done < <(printf '%s' "${DIRECT_BULK_APPS:-}" | tr ',\t ' '\n')
+  done < <(printf '%s\n' "${DIRECT_BULK_APPS:-}" | tr ',\t ' '\n')
 }
 
 require_root() {
