@@ -2,8 +2,9 @@
 
 这个目录将 v2rayN、Clash 订阅和 Clash Verge 全局扩展脚本托管在 Cloudflare Pages 上。相关文件由根目录的 `install.sh` 动态生成并部署，无需手动编辑。
 
-- `Clash` 订阅内置 T 节点与 ISP-1/ISP-2 出口容灾
-- `v2rayN / v2rayNG` 订阅直接提供 `T-ISP1/T-ISP2` 手动节点
+- `Clash` 与 `v2rayN / v2rayNG` 订阅由私有 ISP 清单动态生成
+- `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
+- 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
 - 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
@@ -77,7 +78,7 @@ wrangler pages deploy . --project-name="${CF_PAGES_PROJECT:-sub-converter}" --br
 1. 配置 → 新建
 2. 订阅 URL 填写 `https://<SUB_DOMAIN>/c`
 3. 下载并启用
-4. 默认选择 `🛡️ 自动容灾` 或 `♻️ 自动选择`，即可在 T 节点与 ISP-1/ISP-2 出口之间切换；大流量规则会自动使用 `📦 TX 大流量`
+4. 使用带 `isp=<编号>` 的独立链接时，所有 ISP 流量都固定到该编号；大流量规则仍可使用 `📦 TX 大流量`
 
 ### Clash Verge + 第三方机场
 

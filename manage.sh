@@ -63,7 +63,7 @@ show_menu() {
     echo "2. 查看实时日志"
     echo "3. 重启服务"
     echo "4. 查看本机直连出口 IP"
-    echo "5. 测试 1024proxy SOCKS5 出口"
+    echo "5. 测试全部 ISP SOCKS5 出口"
     echo "6. 检查配置文件语法"
     echo "7. 备份配置"
     echo "8. 卸载 sing-box"
@@ -77,9 +77,13 @@ view_status() {
     systemctl status sing-box --no-pager || true
     echo
     echo -e "${BLUE}监听端口:${NC}"
-    local trojan_port="${TROJAN_PORT:-443}"
-    local hysteria_port="${HYSTERIA_PORT:-8443}"
-    ss -tulnp | grep -E ":${trojan_port}|:${hysteria_port}" || echo "未找到 ${trojan_port}/${hysteria_port} 监听"
+    if [[ -r "${CONFIG_PATH}" ]] && command -v jq >/dev/null 2>&1; then
+        local ports
+        ports="$(jq -r '[.inbounds[]?.listen_port] | unique | join("|")' "${CONFIG_PATH}")"
+        ss -tulnp | grep -E ":(${ports})([[:space:]]|$)" || echo "未找到配置中的入站端口监听"
+    else
+        ss -tulnp | grep sing-box || echo "未找到 sing-box 监听"
+    fi
 }
 
 view_logs() {
@@ -112,20 +116,30 @@ check_direct_ip() {
 
 check_proxy_ip() {
     load_env_safe
-
-    if [[ -z "${PROXY_HOST:-}" || -z "${PROXY_PORT:-}" || -z "${PROXY_USER:-}" || -z "${PROXY_PASS:-}" ]]; then
-        echo -e "${RED}.env 中缺少 PROXY_HOST/PROXY_PORT/PROXY_USER/PROXY_PASS${NC}"
+    local list_file="${ISP_LIST_FILE:-isp-list.tsv}"
+    [[ "${list_file}" == /* ]] || list_file="${SCRIPT_DIR}/${list_file}"
+    if [[ ! -r "${list_file}" ]]; then
+        echo -e "${RED}未找到 ISP 清单: ${list_file}${NC}"
         return 1
     fi
 
-    echo -e "${BLUE}测试 1024proxy SOCKS5 出口...${NC}"
-    local ip
-    ip="$(curl -s --max-time 10 --proxy "socks5://${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}" https://ipinfo.io/ip 2>/dev/null || true)"
-    if [[ -n "$ip" ]]; then
-        echo -e "${GREEN}ISP 代理正常${NC} - IP: $ip"
-    else
-        echo -e "${RED}ISP 代理连接失败${NC}"
-    fi
+    local today id host http_port socks_port user password expires extra ip
+    today="$(date -u +%F)"
+    while IFS=$'\t' read -r id host http_port socks_port user password expires extra || [[ -n "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]]; do
+        expires="${expires%$'\r'}"
+        [[ -z "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]] && continue
+        [[ "${id:0:1}" == "#" || "${id}" == "编号" || "${id,,}" == "id" ]] && continue
+        if [[ "${expires}" < "${today}" ]]; then
+            echo -e "${YELLOW}${id}: 已到期 (${expires})，跳过${NC}"
+            continue
+        fi
+        ip="$(curl -s --max-time 10 --proxy "socks5://${user}:${password}@${host}:${socks_port}" https://ipinfo.io/ip 2>/dev/null || true)"
+        if [[ -n "${ip}" ]]; then
+            echo -e "${GREEN}${id}: 正常${NC} - 出口 IP: ${ip} - 到期: ${expires}"
+        else
+            echo -e "${RED}${id}: 连接失败${NC} - 到期: ${expires}"
+        fi
+    done < "${list_file}"
 }
 
 check_config() {
@@ -143,11 +157,15 @@ check_config() {
 }
 
 backup_config() {
+    load_env_safe
     local backup_dir="${SCRIPT_DIR}/backup-$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$backup_dir"
 
     cp "$CONFIG_PATH" "$backup_dir/" 2>/dev/null || true
     cp "${SCRIPT_DIR}/.env" "$backup_dir/" 2>/dev/null || true
+    local list_file="${ISP_LIST_FILE:-isp-list.tsv}"
+    [[ "${list_file}" == /* ]] || list_file="${SCRIPT_DIR}/${list_file}"
+    cp "${list_file}" "$backup_dir/" 2>/dev/null || true
     cp "${SCRIPT_DIR}/deploy-summary.txt" "$backup_dir/" 2>/dev/null || true
 
     tar czf "${backup_dir}.tar.gz" -C "$backup_dir" .

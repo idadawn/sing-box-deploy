@@ -73,7 +73,8 @@ isp-out               direct-out
 |------|------|
 | `install.sh` | Main deployment script (~1350 lines); parses `.env`, generates and deploys `/etc/sing-box/config.json` via `jq`, configures UFW, manages systemd, deploys Cloudflare Pages subscriptions |
 | `manage.sh` | Post-deploy management menu: status, logs, restart, IP tests, config check, backup, uninstall |
-| `.env` / `.env.example` | All runtime configuration (domains, ports, credentials, Cloudflare tokens, URLTest params); parsed without `source` to avoid side effects |
+| `.env` / `.env.example` | Non-ISP runtime configuration; parsed without `source` to avoid side effects |
+| `isp-list.tsv` / `isp-list.example.tsv` | Private ISP inventory and committed field-only example; the private file is gitignored and must be mode 600 |
 | `cloudflare-pages-sub/functions/v2.js` | Cloudflare Pages Function: returns v2rayN subscription |
 | `cloudflare-pages-sub/functions/c.js` | Cloudflare Pages Function: returns Clash YAML subscription |
 | `cloudflare-pages-sub/wrangler.toml` | Cloudflare Pages project config |
@@ -85,10 +86,10 @@ isp-out               direct-out
 
 - `TROJAN_DOMAIN` / `HYSTERIA_DOMAIN` — Cloudflare-proxied DNS entries
 - `CF_API_TOKEN` — Cloudflare DNS:Edit token for ACME challenge
-- `SOCKS5_*` — 1024proxy ISP egress credentials
+- `ISP_LIST_FILE` — 7-column TSV inventory: id, host, HTTP port, SOCKS5 port, username, password, expiry date
 - `TROJAN_PASSWORD` / `HYSTERIA_PASSWORD` — auto-generate with `openssl rand -base64 32`
 - `CF_PAGES_API_TOKEN` / `CF_ACCOUNT_ID` — for `wrangler pages deploy`
-- `URLTEST_INTERVAL` / `URLTEST_TOLERANCE` — failover tuning (defaults: 3m / 100ms)
+- `ISP_PORT_STEP` — deterministic client ingress port spacing; row order must remain stable
 
 **Constraint**: The `.env` parser does not support inline comments — values must not contain `#`.
 
