@@ -1,5 +1,6 @@
 # ── 敏感配置（绝不提交）──────────────────────────────────
 .env
+isp-list.tsv
 
 # ── Cloudflare Pages 生成文件（由 install.sh 动态生成）────
 cloudflare-pages-sub/functions/v2.js

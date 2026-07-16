@@ -1,0 +1,3 @@
+编号	IP	http端口	socks5端口	user	pwd	到期时间
+example-a	203.0.113.10	8080	1080	example_user	example_password	2099-12-31
+example-b	203.0.113.11	8080	1080	example_user	example_password	2099-12-31

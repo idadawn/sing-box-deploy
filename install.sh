@@ -5,8 +5,8 @@ umask 077
 # =========================================================
 # sing-box 自动化部署脚本（Debian / Ubuntu）
 # - Trojan + Hysteria2
-# - 主出口：ISP SOCKS5（ISP-1 / 可选 ISP-2）
-# - AI 强制走 ISP；可选让视频/CDN/软件包下载从当前服务器直出
+# - 主出口：私有 ISP SOCKS5 清单（每行生成独立入口与订阅）
+# - AI 强制走当前入口对应 ISP；可选让视频/CDN/软件包下载从当前服务器直出
 # - 无通用 VPS 直出兜底，未匹配的 sing-box 入站默认 block
 # - Cloudflare DNS-01 自动签发证书
 # - 配置校验 / 失败回滚 / 增量 UFW
@@ -249,9 +249,7 @@ load_env() {
   HYSTERIA_PORT="${HYSTERIA_PORT:-8443}"
   HYSTERIA_UP_MBPS="${HYSTERIA_UP_MBPS:-50}"
   HYSTERIA_DOWN_MBPS="${HYSTERIA_DOWN_MBPS:-100}"
-  URLTEST_URL="${URLTEST_URL:-https://www.gstatic.com/generate_204}"
-  URLTEST_INTERVAL="${URLTEST_INTERVAL:-3m}"
-  URLTEST_TOLERANCE="${URLTEST_TOLERANCE:-50}"
+  ISP_PORT_STEP="${ISP_PORT_STEP:-10000}"
   AI_ISP_DOMAINS="${AI_ISP_DOMAINS:-${DEFAULT_AI_ISP_DOMAINS}}"
   DIRECT_BULK_ENABLED="${DIRECT_BULK_ENABLED:-false}"
   DIRECT_BULK_DOMAINS="${DIRECT_BULK_DOMAINS:-${DEFAULT_DIRECT_BULK_DOMAINS}}"
@@ -309,6 +307,140 @@ validate_domain_like() {
   [[ "${value}" == *.* ]] || { log_error "${name} 格式看起来不像域名"; exit 1; }
 }
 
+load_isp_list() {
+  [[ -n "${ISP_LIST_FILE:-}" ]] || {
+    log_error "未配置 ISP_LIST_FILE"
+    exit 1
+  }
+
+  if [[ "${ISP_LIST_FILE}" != /* ]]; then
+    ISP_LIST_FILE="${SCRIPT_DIR}/${ISP_LIST_FILE}"
+  fi
+  [[ -f "${ISP_LIST_FILE}" ]] || {
+    log_error "未找到 ISP 清单: ${ISP_LIST_FILE}"
+    exit 1
+  }
+
+  local permissions
+  permissions="$(stat -c '%a' "${ISP_LIST_FILE}")"
+  if (( (8#${permissions} & 077) != 0 )); then
+    log_error "ISP 清单包含凭据，权限必须为 600: ${ISP_LIST_FILE}（当前 ${permissions}）"
+    exit 1
+  fi
+
+  validate_positive_int "ISP_PORT_STEP" "${ISP_PORT_STEP}"
+  (( ISP_PORT_STEP > 0 )) || {
+    log_error "ISP_PORT_STEP 必须大于 0"
+    exit 1
+  }
+
+  ISP_IDS=()
+  ISP_HOSTS=()
+  ISP_HTTP_PORTS=()
+  ISP_SOCKS_PORTS=()
+  ISP_USERS=()
+  ISP_PASSWORDS=()
+  ISP_EXPIRES=()
+  ISP_TROJAN_PORTS=()
+  ISP_HYSTERIA_PORTS=()
+
+  local today slot=0 line_number=0
+  local id host http_port socks_port user password expires extra
+  local trojan_port hysteria_port
+  local -A seen_ids=()
+  local -A seen_client_ports=()
+  today="$(date -u +%F)"
+
+  while IFS=$'\t' read -r id host http_port socks_port user password expires extra || [[ -n "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]]; do
+    line_number=$((line_number + 1))
+    id="${id%$'\r'}"
+    expires="${expires%$'\r'}"
+
+    [[ -z "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]] && continue
+    [[ "${id:0:1}" == "#" ]] && continue
+    if [[ "${id}" == "编号" || "${id,,}" == "id" ]]; then
+      continue
+    fi
+
+    if [[ -n "${extra}" || -z "${id}" || -z "${host}" || -z "${http_port}" || -z "${socks_port}" || -z "${user}" || -z "${password}" || -z "${expires}" ]]; then
+      log_error "ISP 清单第 ${line_number} 行必须恰好包含 7 个非空 TSV 字段"
+      exit 1
+    fi
+    [[ "${id}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || {
+      log_error "ISP 清单第 ${line_number} 行编号非法: ${id}"
+      exit 1
+    }
+    [[ -z "${seen_ids[${id}]:-}" ]] || {
+      log_error "ISP 清单编号重复: ${id}"
+      exit 1
+    }
+    seen_ids["${id}"]=1
+
+    validate_domain_like "ISP ${id} IP/域名" "${host}"
+    validate_port "ISP ${id} HTTP_PORT" "${http_port}"
+    validate_port "ISP ${id} SOCKS5_PORT" "${socks_port}"
+    [[ "${expires}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -u -d "${expires}T00:00:00Z" >/dev/null 2>&1 || {
+      log_error "ISP ${id} 到期时间必须是有效的 YYYY-MM-DD: ${expires}"
+      exit 1
+    }
+
+    trojan_port=$((TROJAN_PORT + slot * ISP_PORT_STEP))
+    hysteria_port=$((HYSTERIA_PORT + slot * ISP_PORT_STEP))
+    validate_port "ISP ${id} TROJAN_PORT" "${trojan_port}"
+    validate_port "ISP ${id} HYSTERIA_PORT" "${hysteria_port}"
+    for client_port in "${trojan_port}" "${hysteria_port}"; do
+      [[ -z "${seen_client_ports[${client_port}]:-}" ]] || {
+        log_error "ISP 清单生成了重复的客户端端口: ${client_port}"
+        exit 1
+      }
+      seen_client_ports["${client_port}"]=1
+    done
+    slot=$((slot + 1))
+
+    if [[ "${expires}" < "${today}" ]]; then
+      log_warn "ISP ${id} 已于 ${expires} 到期，本次部署跳过"
+      continue
+    fi
+
+    ISP_IDS+=("${id}")
+    ISP_HOSTS+=("${host}")
+    ISP_HTTP_PORTS+=("${http_port}")
+    ISP_SOCKS_PORTS+=("${socks_port}")
+    ISP_USERS+=("${user}")
+    ISP_PASSWORDS+=("${password}")
+    ISP_EXPIRES+=("${expires}")
+    ISP_TROJAN_PORTS+=("${trojan_port}")
+    ISP_HYSTERIA_PORTS+=("${hysteria_port}")
+  done < "${ISP_LIST_FILE}"
+
+  ISP_COUNT="${#ISP_IDS[@]}"
+  (( ISP_COUNT > 0 )) || {
+    log_error "ISP 清单中没有未到期的可用条目"
+    exit 1
+  }
+  log_success "ISP 清单已加载: ${ISP_COUNT} 个有效条目"
+}
+
+build_isp_json() {
+  ISP_LIST_JSON='[]'
+  local index
+  for ((index = 0; index < ISP_COUNT; index++)); do
+    ISP_LIST_JSON=$(jq -cn \
+      --argjson current "${ISP_LIST_JSON}" \
+      --arg id "${ISP_IDS[index]}" \
+      --arg host "${ISP_HOSTS[index]}" \
+      --arg username "${ISP_USERS[index]}" \
+      --arg password "${ISP_PASSWORDS[index]}" \
+      --arg expires "${ISP_EXPIRES[index]}" \
+      --argjson http_port "${ISP_HTTP_PORTS[index]}" \
+      --argjson socks_port "${ISP_SOCKS_PORTS[index]}" \
+      --argjson trojan_port "${ISP_TROJAN_PORTS[index]}" \
+      --argjson hysteria_port "${ISP_HYSTERIA_PORTS[index]}" \
+      '$current + [{id: $id, host: $host, http_port: $http_port, socks_port: $socks_port, username: $username, password: $password, expires: $expires, trojan_port: $trojan_port, hysteria_port: $hysteria_port}]')
+  done
+  ISP_PUBLIC_LIST_JSON=$(jq -c 'map({id, expires, trojan_port, hysteria_port})' <<< "${ISP_LIST_JSON}")
+}
+
 validate_config() {
   log_info "校验配置..."
 
@@ -317,10 +449,7 @@ validate_config() {
     HYSTERIA_DOMAIN
     CF_DNS_EDIT_TOKEN
     ACME_EMAIL
-    PROXY_HOST
-    PROXY_PORT
-    PROXY_USER
-    PROXY_PASS
+    ISP_LIST_FILE
     TROJAN_PASSWORD
     HYSTERIA_PASSWORD
     HYSTERIA_OBFS_PASSWORD
@@ -357,42 +486,11 @@ validate_config() {
 
   validate_port "TROJAN_PORT" "${TROJAN_PORT}"
   validate_port "HYSTERIA_PORT" "${HYSTERIA_PORT}"
-  validate_port "PROXY_PORT" "${PROXY_PORT}"
   validate_port "SSH_PORT" "${SSH_PORT}"
-
-  local proxy2_fields=(
-    PROXY2_HOST
-    PROXY2_PORT
-    PROXY2_USER
-    PROXY2_PASS
-  )
-  local proxy2_set_count=0
-  local proxy2_var
-  for proxy2_var in "${proxy2_fields[@]}"; do
-    [[ -n "${!proxy2_var:-}" ]] && proxy2_set_count=$((proxy2_set_count + 1))
-  done
-
-  HAS_PROXY2=0
-  if (( proxy2_set_count > 0 )); then
-    if (( proxy2_set_count != ${#proxy2_fields[@]} )); then
-      log_error "启用 ISP-2 时，必须完整设置 PROXY2_HOST/PORT/USER/PASS"
-      exit 1
-    fi
-    validate_port "PROXY2_PORT" "${PROXY2_PORT}"
-    HAS_PROXY2=1
-  fi
-
-  ISP2_TROJAN_PORT="${ISP2_TROJAN_PORT:-$(derive_offset_port ISP2_TROJAN_PORT "${TROJAN_PORT}" 10000)}"
-  ISP2_HYSTERIA_PORT="${ISP2_HYSTERIA_PORT:-$(derive_offset_port ISP2_HYSTERIA_PORT "${HYSTERIA_PORT}" 10000)}"
-  if (( HAS_PROXY2 == 1 )); then
-    validate_port "ISP2_TROJAN_PORT" "${ISP2_TROJAN_PORT}"
-    validate_port "ISP2_HYSTERIA_PORT" "${ISP2_HYSTERIA_PORT}"
-  fi
+  load_isp_list
 
   validate_positive_int "HYSTERIA_UP_MBPS" "${HYSTERIA_UP_MBPS}"
   validate_positive_int "HYSTERIA_DOWN_MBPS" "${HYSTERIA_DOWN_MBPS}"
-  validate_positive_int "URLTEST_TOLERANCE" "${URLTEST_TOLERANCE}"
-
   [[ "${LOG_LEVEL}" =~ ^(trace|debug|info|warn|error|fatal|panic)$ ]] || {
     log_error "LOG_LEVEL 非法，允许值: trace|debug|info|warn|error|fatal|panic"
     exit 1
@@ -467,6 +565,7 @@ generate_config() {
   log_info "生成 sing-box 配置..."
 
   TMP_CONFIG="$(mktemp /tmp/sing-box-config.XXXXXX.json)"
+  build_isp_json
 
   local direct_bulk_enabled_json=false
   if is_true "${DIRECT_BULK_ENABLED}"; then
@@ -484,27 +583,12 @@ generate_config() {
     --arg tj_password "${TROJAN_PASSWORD}" \
     --arg hy2_password "${HYSTERIA_PASSWORD}" \
     --arg hy2_obfs_password "${HYSTERIA_OBFS_PASSWORD}" \
-    --arg proxy_host "${PROXY_HOST}" \
-    --arg proxy2_host "${PROXY2_HOST:-}" \
-    --arg proxy_user "${PROXY_USER}" \
-    --arg proxy2_user "${PROXY2_USER:-}" \
-    --arg proxy_pass "${PROXY_PASS}" \
-    --arg proxy2_pass "${PROXY2_PASS:-}" \
-    --arg urltest_url "${URLTEST_URL}" \
-    --arg urltest_interval "${URLTEST_INTERVAL}" \
     --arg ai_isp_domains "${AI_ISP_DOMAINS}" \
     --arg direct_bulk_domains "${DIRECT_BULK_DOMAINS}" \
+    --argjson isps "${ISP_LIST_JSON}" \
     --argjson direct_bulk_enabled "${direct_bulk_enabled_json}" \
-    --argjson has_proxy2 "${HAS_PROXY2}" \
-    --argjson trojan_port "${TROJAN_PORT}" \
-    --argjson hysteria_port "${HYSTERIA_PORT}" \
-    --argjson proxy_port "${PROXY_PORT}" \
-    --argjson proxy2_port "${PROXY2_PORT:-0}" \
-    --argjson isp2_trojan_port "${ISP2_TROJAN_PORT}" \
-    --argjson isp2_hysteria_port "${ISP2_HYSTERIA_PORT}" \
     --argjson hy2_up_mbps "${HYSTERIA_UP_MBPS}" \
     --argjson hy2_down_mbps "${HYSTERIA_DOWN_MBPS}" \
-    --argjson urltest_tolerance "${URLTEST_TOLERANCE}" \
     '
     def cf_dns01:
       ({
@@ -527,24 +611,16 @@ generate_config() {
       | unique;
 
     def client_inbounds:
-      ["trojan-isp1-in", "hy2-isp1-in"] + (
-        if $has_proxy2 == 1 then
-          ["trojan-isp2-in", "hy2-isp2-in"]
-        else
-          []
-        end
-      );
+      [$isps[] | "trojan-\(.id)-in", "hy2-\(.id)-in"];
 
     def ai_isp_rules:
       domain_list($ai_isp_domains) as $domains
       | if ($domains | length) > 0 then
-          [
-            {
-              inbound: client_inbounds,
-              domain_suffix: $domains,
-              outbound: "ai-out"
-            }
-          ]
+          [$isps[] | {
+            inbound: ["trojan-\(.id)-in", "hy2-\(.id)-in"],
+            domain_suffix: $domains,
+            outbound: "isp-out-\(.id)"
+          }]
         else
           []
         end;
@@ -639,62 +715,21 @@ generate_config() {
         ]
       },
       inbounds: (
-        [
-          trojan_inbound("trojan-isp1-in"; $trojan_port; "tj-isp1"),
-          hy2_inbound("hy2-isp1-in"; $hysteria_port; "hy2-isp1")
-        ] + (
-          if $has_proxy2 == 1 then
-            [
-              trojan_inbound("trojan-isp2-in"; $isp2_trojan_port; "tj-isp2"),
-              hy2_inbound("hy2-isp2-in"; $isp2_hysteria_port; "hy2-isp2")
-            ]
-          else
-            []
-          end
-        )
+        [$isps[] |
+          trojan_inbound("trojan-\(.id)-in"; .trojan_port; "tj-\(.id)"),
+          hy2_inbound("hy2-\(.id)-in"; .hysteria_port; "hy2-\(.id)")
+        ]
       ),
-      outbounds: [
-        {
+      outbounds: (
+        [$isps[] | {
           type: "socks",
-          tag: "isp-out-1",
-          server: $proxy_host,
-          server_port: $proxy_port,
+          tag: "isp-out-\(.id)",
+          server: .host,
+          server_port: .socks_port,
           version: "5",
-          username: $proxy_user,
-          password: $proxy_pass
-        },
-        (
-          if $has_proxy2 == 1 then
-            {
-              type: "socks",
-              tag: "isp-out-2",
-              server: $proxy2_host,
-              server_port: $proxy2_port,
-              version: "5",
-              username: $proxy2_user,
-              password: $proxy2_pass
-            }
-          else
-            empty
-          end
-        ),
-        {
-          type: "urltest",
-          tag: "ai-out",
-          outbounds: (
-            ["isp-out-1"] + (
-              if $has_proxy2 == 1 then
-                ["isp-out-2"]
-              else
-                []
-              end
-            )
-          ),
-          url: $urltest_url,
-          interval: $urltest_interval,
-          tolerance: $urltest_tolerance,
-          interrupt_exist_connections: false
-        },
+          username: .username,
+          password: .password
+        }] + [
         (
           if $direct_bulk_enabled and ((domain_list($direct_bulk_domains) | length) > 0) then
             {
@@ -709,30 +744,18 @@ generate_config() {
           type: "block",
           tag: "block"
         }
-      ],
+      ]),
       route: {
         rules: (
           [
             {
               action: "sniff"
             }
-          ] + ai_isp_rules + direct_bulk_rules + [
-            {
-              inbound: ["trojan-isp1-in", "hy2-isp1-in"],
-              outbound: "isp-out-1"
-            }
-          ] + (
-            if $has_proxy2 == 1 then
-              [
-                {
-                  inbound: ["trojan-isp2-in", "hy2-isp2-in"],
-                  outbound: "isp-out-2"
-                }
-              ]
-            else
-              []
-            end
-          )
+          ] + ai_isp_rules + direct_bulk_rules +
+          [$isps[] | {
+            inbound: ["trojan-\(.id)-in", "hy2-\(.id)-in"],
+            outbound: "isp-out-\(.id)"
+          }]
         ),
         final: "block",
         auto_detect_interface: true,
@@ -777,12 +800,11 @@ setup_firewall() {
   }
 
   ufw allow "${SSH_PORT}/tcp" comment 'SSH' >/dev/null || true
-  ufw allow "${TROJAN_PORT}/tcp" comment 'sing-box Trojan' >/dev/null || true
-  ufw allow "${HYSTERIA_PORT}/udp" comment 'sing-box Hysteria2' >/dev/null || true
-  if (( HAS_PROXY2 == 1 )); then
-    ufw allow "${ISP2_TROJAN_PORT}/tcp" comment 'sing-box Trojan ISP-2' >/dev/null || true
-    ufw allow "${ISP2_HYSTERIA_PORT}/udp" comment 'sing-box Hysteria2 ISP-2' >/dev/null || true
-  fi
+  local index
+  for ((index = 0; index < ISP_COUNT; index++)); do
+    ufw allow "${ISP_TROJAN_PORTS[index]}/tcp" comment "sing-box Trojan ${ISP_IDS[index]}" >/dev/null || true
+    ufw allow "${ISP_HYSTERIA_PORTS[index]}/udp" comment "sing-box Hysteria2 ${ISP_IDS[index]}" >/dev/null || true
+  done
 
   if ufw status | grep -qi "Status: inactive"; then
     ufw --force enable >/dev/null
@@ -832,6 +854,7 @@ setup_egress_monitor() {
 set -Eeuo pipefail
 
 ENV_FILE="__ENV_FILE__"
+ISP_LIST_FILE="__ISP_LIST_FILE__"
 STATE_DIR="/var/lib/sing-box-egress-monitor"
 STATE_FILE="${STATE_DIR}/last-status"
 
@@ -894,8 +917,7 @@ build_subject() {
   if (( ${#problems[@]} == 1 )); then
     case "${problems[0]}" in
       "中继服务器公网出口访问异常") printf '%s' "中继异常-公网出口" ;;
-      "ISP-1 SOCKS5 出口访问异常") printf '%s' "中继异常-ISP-1出口" ;;
-      "ISP-2 SOCKS5 出口访问异常") printf '%s' "中继异常-ISP-2出口" ;;
+      ISP-*) printf '%s' "中继异常-ISP出口" ;;
       "sing-box 服务未运行") printf '%s' "中继异常-服务状态" ;;
       *) printf '%s' "中继异常-出口状态" ;;
     esac
@@ -954,19 +976,20 @@ main() {
     problems+=("中继服务器公网出口访问异常")
   fi
 
-  if retry_command probe_socks5_once "${PROXY_HOST}" "${PROXY_PORT}" "${PROXY_USER}" "${PROXY_PASS}" "${check_url}"; then
-    summary+=("ISP-1 SOCKS5 出口正常")
-  else
-    problems+=("ISP-1 SOCKS5 出口访问异常")
-  fi
-
-  if [[ -n "${PROXY2_HOST:-}" && -n "${PROXY2_PORT:-}" && -n "${PROXY2_USER:-}" && -n "${PROXY2_PASS:-}" ]]; then
-    if retry_command probe_socks5_once "${PROXY2_HOST}" "${PROXY2_PORT}" "${PROXY2_USER}" "${PROXY2_PASS}" "${check_url}"; then
-      summary+=("ISP-2 SOCKS5 出口正常")
+  local id host http_port socks_port user password expires extra
+  local today
+  today="$(date -u +%F)"
+  while IFS=$'\t' read -r id host http_port socks_port user password expires extra || [[ -n "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]]; do
+    expires="${expires%$'\r'}"
+    [[ -z "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]] && continue
+    [[ "${id:0:1}" == "#" || "${id}" == "编号" || "${id,,}" == "id" ]] && continue
+    [[ "${expires}" < "${today}" ]] && continue
+    if retry_command probe_socks5_once "${host}" "${socks_port}" "${user}" "${password}" "${check_url}"; then
+      summary+=("ISP-${id} SOCKS5 出口正常")
     else
-      problems+=("ISP-2 SOCKS5 出口访问异常")
+      problems+=("ISP-${id} SOCKS5 出口访问异常")
     fi
-  fi
+  done < "${ISP_LIST_FILE}"
 
   if (( ${#problems[@]} == 0 )); then
     rm -f "${STATE_FILE}"
@@ -1002,6 +1025,7 @@ main "$@"
 MONITOR
 
   sed -i "s|__ENV_FILE__|${ENV_FILE}|g" "${monitor_script}"
+  sed -i "s|__ISP_LIST_FILE__|${ISP_LIST_FILE}|g" "${monitor_script}"
   chmod 700 "${monitor_script}"
 
   cat > "${service_path}" <<EOF
@@ -1066,37 +1090,31 @@ restart_service() {
 
 write_summary() {
   local summary_file="${SCRIPT_DIR}/deploy-summary.txt"
-  cat > "${summary_file}" <<EOF
+  {
+    cat <<EOF
 部署时间: $(date '+%Y-%m-%d %H:%M:%S')
 
-[服务端入口]
-Trojan:
-  域名: ${TROJAN_DOMAIN}
-  端口: ${TROJAN_PORT}
-  SNI : ${TROJAN_DOMAIN}
+[ISP 清单]
+EOF
+    local index
+    for ((index = 0; index < ISP_COUNT; index++)); do
+      printf '%s: SOCKS5 %s:%s, HTTP %s, 到期 %s\n' \
+        "${ISP_IDS[index]}" "${ISP_HOSTS[index]}" "${ISP_SOCKS_PORTS[index]}" \
+        "${ISP_HTTP_PORTS[index]}" "${ISP_EXPIRES[index]}"
+      printf '  Trojan %s:%s / Hysteria2 %s:%s\n' \
+        "${TROJAN_DOMAIN}" "${ISP_TROJAN_PORTS[index]}" \
+        "${HYSTERIA_DOMAIN}" "${ISP_HYSTERIA_PORTS[index]}"
+      printf '  v2ray: https://%s/v2?isp=%s\n' "${SUB_DOMAIN}" "${ISP_IDS[index]}"
+      printf '  Clash: https://%s/c?isp=%s\n' "${SUB_DOMAIN}" "${ISP_IDS[index]}"
+    done
+    cat <<EOF
 
-Hysteria2:
-  域名: ${HYSTERIA_DOMAIN}
-  端口: ${HYSTERIA_PORT}
-  SNI : ${HYSTERIA_DOMAIN}
-  OBFS: salamander
-
-[服务端出口]
-ISP-1: SOCKS5 (${PROXY_HOST}:${PROXY_PORT})
-ISP-2: ${PROXY2_HOST:-未配置}
-AI 域名: 强制使用 ISP 自动出口
+AI 域名: 强制使用当前订阅对应 ISP
 视频/软件下载直出: ${DIRECT_BULK_ENABLED}
-Clash 自动容灾: T-ISP1 -> T-ISP2
-v2rayN/v2rayNG: 可手动选择 T-ISP1 / T-ISP2 节点
-
-[接入端口]
-ISP-1 Trojan: ${TROJAN_PORT}
-ISP-1 Hysteria2: ${HYSTERIA_PORT}
-ISP-2 Trojan: ${ISP2_TROJAN_PORT}
-ISP-2 Hysteria2: ${ISP2_HYSTERIA_PORT}
 
 [文件]
 配置文件: ${CONFIG_PATH}
+ISP 清单: ${ISP_LIST_FILE}
 证书目录: ${CERT_DIR}
 备份配置: ${BACKUP_CONFIG:-无}
 
@@ -1106,6 +1124,7 @@ ISP-2 Hysteria2: ${ISP2_HYSTERIA_PORT}
 查看日志: journalctl -u sing-box -f
 重启服务: systemctl restart sing-box
 EOF
+  } > "${summary_file}"
   chmod 600 "${summary_file}"
   log_success "部署摘要已写入: ${summary_file}"
 }
@@ -1115,16 +1134,13 @@ show_final_info() {
   echo "=================================================="
   echo -e "${GREEN}部署完成${NC}"
   echo "=================================================="
-  echo "Trojan    : ${TROJAN_DOMAIN}:${TROJAN_PORT}"
-  echo "Hysteria2 : ${HYSTERIA_DOMAIN}:${HYSTERIA_PORT}"
-  echo "ISP-1 出口 : ${PROXY_HOST}:${PROXY_PORT}"
-  if (( HAS_PROXY2 == 1 )); then
-    echo "ISP-2 出口 : ${PROXY2_HOST}:${PROXY2_PORT}"
-  fi
-  echo "AI 域名策略: ISP 自动出口"
+  local index
+  for ((index = 0; index < ISP_COUNT; index++)); do
+    echo "${ISP_IDS[index]}: Trojan ${ISP_TROJAN_PORTS[index]}, Hysteria2 ${ISP_HYSTERIA_PORTS[index]}, 到期 ${ISP_EXPIRES[index]}"
+  done
+  echo "AI 域名策略: 当前订阅对应 ISP"
   echo "视频/下载直出: ${DIRECT_BULK_ENABLED}"
-  echo "Clash 容灾 : T-ISP1 -> T-ISP2"
-  echo "v2 手选节点: T-ISP1 / T-ISP2"
+  echo "独立订阅数量: ${ISP_COUNT}"
   echo "配置文件   : ${CONFIG_PATH}"
   [[ -n "${BACKUP_CONFIG}" ]] && echo "配置备份   : ${BACKUP_CONFIG}"
   echo "日志命令   : journalctl -u sing-box -f"
@@ -1205,10 +1221,26 @@ verify_subscription() {
       fi
     fi
     
-    # 都成功则退出
+    # 基础入口通过后，逐个验证私有 ISP 订阅只包含对应节点。
     if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $rules_ok -eq 1 ]]; then
-      log_success "订阅验证全部通过！"
-      return 0
+      local personal_ok=1
+      local index id personal_v2 personal_c
+      for ((index = 0; index < ISP_COUNT; index++)); do
+        id="${ISP_IDS[index]}"
+        personal_v2=$(curl -sL --max-time 10 "https://${domain}/v2?isp=${id}&${verification_query}" 2>/dev/null | base64 -d 2>/dev/null)
+        personal_c=$(curl -sL --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null)
+        if [[ "$(grep -c "#T-${id}-" <<< "${personal_v2}" || true)" -ne 2 ]] \
+          || ! grep -Fq "name: \"T-${id}-TJ\"" <<< "${personal_c}" \
+          || ! grep -Fq "name: \"T-${id}-HY2\"" <<< "${personal_c}"; then
+          log_warn "ISP ${id} 独立订阅验证失败，重试..."
+          personal_ok=0
+          break
+        fi
+      done
+      if (( personal_ok == 1 )); then
+        log_success "${ISP_COUNT} 组独立 ISP 订阅验证全部通过！"
+        return 0
+      fi
     fi
     
     retry=$((retry + 1))
@@ -1317,33 +1349,27 @@ update_cloudflare_pages() {
 export async function onRequest(context) {
   const url = new URL(context.request.url);
   const isRaw = url.searchParams.get('raw') === '1';
+  const requestedIsp = url.searchParams.get('isp');
+  const today = new Date().toISOString().slice(0, 10);
+  const allEntries = JSON.parse(atob('ISP_PUBLIC_LIST_BASE64_PLACEHOLDER'));
+  const activeEntries = allEntries.filter((entry) => entry.expires >= today);
+  const entries = requestedIsp
+    ? activeEntries.filter((entry) => entry.id === requestedIsp)
+    : activeEntries;
 
-  const nodes = [
-    `trojan://TROJAN_PASSWORD_PLACEHOLDER@TROJAN_DOMAIN_PLACEHOLDER:TROJAN_PORT_PLACEHOLDER?security=tls&sni=TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#T-ISP1-TJ`,
-    `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@HYSTERIA_DOMAIN_PLACEHOLDER:HYSTERIA_PORT_PLACEHOLDER/?sni=HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#T-ISP1-HY2`,
-  ];
-
-  if (HAS_PROXY2_PLACEHOLDER) {
-    nodes.push(
-      `trojan://TROJAN_PASSWORD_PLACEHOLDER@TROJAN_DOMAIN_PLACEHOLDER:ISP2_TROJAN_PORT_PLACEHOLDER?security=tls&sni=TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#T-ISP2-TJ`,
-      `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@HYSTERIA_DOMAIN_PLACEHOLDER:ISP2_HYSTERIA_PORT_PLACEHOLDER/?sni=HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#T-ISP2-HY2`,
-    );
+  if (entries.length === 0) {
+    return new Response('ISP subscription not found or expired', { status: 410 });
   }
 
-  if (J_ENABLED_PLACEHOLDER) {
-    nodes.push(
-      `trojan://TROJAN_PASSWORD_PLACEHOLDER@J_TROJAN_DOMAIN_PLACEHOLDER:TROJAN_PORT_PLACEHOLDER?security=tls&sni=J_TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#J-ISP1-TJ`,
-      `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@J_HYSTERIA_DOMAIN_PLACEHOLDER:HYSTERIA_PORT_PLACEHOLDER/?sni=J_HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#J-ISP1-HY2`,
-    );
-    if (HAS_PROXY2_PLACEHOLDER) {
-      nodes.push(
-        `trojan://TROJAN_PASSWORD_PLACEHOLDER@J_TROJAN_DOMAIN_PLACEHOLDER:ISP2_TROJAN_PORT_PLACEHOLDER?security=tls&sni=J_TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#J-ISP2-TJ`,
-        `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@J_HYSTERIA_DOMAIN_PLACEHOLDER:ISP2_HYSTERIA_PORT_PLACEHOLDER/?sni=J_HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#J-ISP2-HY2`,
-      );
-    }
-  }
+  const nodes = entries.flatMap((entry) => [
+    `trojan://TROJAN_PASSWORD_PLACEHOLDER@TROJAN_DOMAIN_PLACEHOLDER:${entry.trojan_port}?security=tls&sni=TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#T-${entry.id}-TJ`,
+    `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@HYSTERIA_DOMAIN_PLACEHOLDER:${entry.hysteria_port}/?sni=HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#T-${entry.id}-HY2`,
+  ]);
 
   const uriList = nodes.join('\n');
+  const expire = entries.length > 0
+    ? Math.floor(new Date(`${entries.map((entry) => entry.expires).sort()[0]}T23:59:59Z`).getTime() / 1000)
+    : 0;
 
   if (isRaw) {
     return new Response(uriList, {
@@ -1366,7 +1392,7 @@ export async function onRequest(context) {
       'Content-Type': 'text/plain; charset=utf-8', 
       'Cache-Control': 'no-cache', 
       'Access-Control-Allow-Origin': '*',
-      'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0'
+      'Subscription-Userinfo': `upload=0; download=0; total=0; expire=${expire}`
     }
   });
 }
@@ -1378,43 +1404,34 @@ V2JS
   local obfs_password_encoded=$(echo -n "${HYSTERIA_OBFS_PASSWORD}" | jq -sRr @uri)
   
   # 替换 v2.js 中的占位符
-  sed -i "s|J_TROJAN_DOMAIN_PLACEHOLDER|${J_TROJAN_DOMAIN:-}|g" "${functions_dir}/v2.js"
-  sed -i "s|J_HYSTERIA_DOMAIN_PLACEHOLDER|${J_HYSTERIA_DOMAIN:-}|g" "${functions_dir}/v2.js"
   sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${functions_dir}/v2.js"
   sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${functions_dir}/v2.js"
-  sed -i "s|ISP2_TROJAN_PORT_PLACEHOLDER|${ISP2_TROJAN_PORT}|g" "${functions_dir}/v2.js"
-  sed -i "s|ISP2_HYSTERIA_PORT_PLACEHOLDER|${ISP2_HYSTERIA_PORT}|g" "${functions_dir}/v2.js"
-  sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${functions_dir}/v2.js"
-  sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${functions_dir}/v2.js"
   sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${trojan_password_encoded}|g" "${functions_dir}/v2.js"
   sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${hy2_password_encoded}|g" "${functions_dir}/v2.js"
   sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${obfs_password_encoded}|g" "${functions_dir}/v2.js"
-  sed -i "s|HAS_PROXY2_PLACEHOLDER|$([[ ${HAS_PROXY2} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/v2.js"
-  sed -i "s|J_ENABLED_PLACEHOLDER|$([[ ${HAS_VPS_J} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/v2.js"
+  local isp_public_list_base64
+  isp_public_list_base64=$(printf '%s' "${ISP_PUBLIC_LIST_JSON}" | base64 | tr -d '\n')
+  sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${functions_dir}/v2.js"
 
   # 生成 c.js (Clash 订阅) - 完整双层结构配置
   cat > "${functions_dir}/c.js" <<'CJS'
 // Clash 订阅接口 - 返回完整双层结构配置
 export async function onRequest(context) {
-  const proxyNames = [
-    "T-ISP1-TJ",
-    "T-ISP1-HY2",
-    ...(HAS_PROXY2_PLACEHOLDER ? ["T-ISP2-TJ", "T-ISP2-HY2"] : []),
-    ...(J_ENABLED_PLACEHOLDER ? ["J-ISP1-TJ", "J-ISP1-HY2"] : []),
-    ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER ? ["J-ISP2-TJ", "J-ISP2-HY2"] : []),
-  ];
-  const txProxyNames = [
-    "T-ISP1-TJ",
-    "T-ISP1-HY2",
-    ...(HAS_PROXY2_PLACEHOLDER ? ["T-ISP2-TJ", "T-ISP2-HY2"] : []),
-  ];
-  const ispOnlyProxyNames = [
-    "T-ISP1-TJ",
-    "T-ISP1-HY2",
-    ...(HAS_PROXY2_PLACEHOLDER ? ["T-ISP2-TJ", "T-ISP2-HY2"] : []),
-    ...(J_ENABLED_PLACEHOLDER ? ["J-ISP1-TJ", "J-ISP1-HY2"] : []),
-    ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER ? ["J-ISP2-TJ", "J-ISP2-HY2"] : []),
-  ];
+  const url = new URL(context.request.url);
+  const requestedIsp = url.searchParams.get('isp');
+  const today = new Date().toISOString().slice(0, 10);
+  const allEntries = JSON.parse(atob('ISP_PUBLIC_LIST_BASE64_PLACEHOLDER'));
+  const activeEntries = allEntries.filter((entry) => entry.expires >= today);
+  const entries = requestedIsp
+    ? activeEntries.filter((entry) => entry.id === requestedIsp)
+    : activeEntries;
+  if (entries.length === 0) {
+    return new Response('ISP subscription not found or expired', { status: 410 });
+  }
+
+  const proxyNames = entries.flatMap((entry) => [`T-${entry.id}-TJ`, `T-${entry.id}-HY2`]);
+  const txProxyNames = proxyNames;
+  const ispOnlyProxyNames = proxyNames;
   const decodeDomainList = (encoded) => atob(encoded)
     .split(/[\s,]+/)
     .map((domain) => domain.trim())
@@ -1424,11 +1441,11 @@ export async function onRequest(context) {
     ? decodeDomainList("DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER")
     : [];
 
-  const proxies = [
-    `  - name: "T-ISP1-TJ"
+  const proxies = entries.flatMap((entry) => [
+    `  - name: "T-${entry.id}-TJ"
     type: trojan
     server: TROJAN_DOMAIN_PLACEHOLDER
-    port: TROJAN_PORT_PLACEHOLDER
+    port: ${entry.trojan_port}
     password: "TROJAN_PASSWORD_PLACEHOLDER"
     udp: true
     sni: TROJAN_DOMAIN_PLACEHOLDER
@@ -1437,10 +1454,10 @@ export async function onRequest(context) {
       - http/1.1
     skip-cert-verify: false
     client-fingerprint: chrome`,
-    `  - name: "T-ISP1-HY2"
+    `  - name: "T-${entry.id}-HY2"
     type: hysteria2
     server: HYSTERIA_DOMAIN_PLACEHOLDER
-    port: HYSTERIA_PORT_PLACEHOLDER
+    port: ${entry.hysteria_port}
     password: "HYSTERIA_PASSWORD_PLACEHOLDER"
     obfs: salamander
     obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
@@ -1450,94 +1467,7 @@ export async function onRequest(context) {
     skip-cert-verify: false
     up: "HYSTERIA_UP_PLACEHOLDER Mbps"
     down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
-    ...(HAS_PROXY2_PLACEHOLDER
-      ? [
-          `  - name: "T-ISP2-TJ"
-    type: trojan
-    server: TROJAN_DOMAIN_PLACEHOLDER
-    port: ISP2_TROJAN_PORT_PLACEHOLDER
-    password: "TROJAN_PASSWORD_PLACEHOLDER"
-    udp: true
-    sni: TROJAN_DOMAIN_PLACEHOLDER
-    alpn:
-      - h2
-      - http/1.1
-    skip-cert-verify: false
-    client-fingerprint: chrome`,
-          `  - name: "T-ISP2-HY2"
-    type: hysteria2
-    server: HYSTERIA_DOMAIN_PLACEHOLDER
-    port: ISP2_HYSTERIA_PORT_PLACEHOLDER
-    password: "HYSTERIA_PASSWORD_PLACEHOLDER"
-    obfs: salamander
-    obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
-    alpn:
-      - h3
-    sni: HYSTERIA_DOMAIN_PLACEHOLDER
-    skip-cert-verify: false
-    up: "HYSTERIA_UP_PLACEHOLDER Mbps"
-    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
-        ]
-      : []),
-    ...(J_ENABLED_PLACEHOLDER
-      ? [
-          `  - name: "J-ISP1-TJ"
-    type: trojan
-    server: J_TROJAN_DOMAIN_PLACEHOLDER
-    port: TROJAN_PORT_PLACEHOLDER
-    password: "TROJAN_PASSWORD_PLACEHOLDER"
-    udp: true
-    sni: J_TROJAN_DOMAIN_PLACEHOLDER
-    alpn:
-      - h2
-      - http/1.1
-    skip-cert-verify: false
-    client-fingerprint: chrome`,
-          `  - name: "J-ISP1-HY2"
-    type: hysteria2
-    server: J_HYSTERIA_DOMAIN_PLACEHOLDER
-    port: HYSTERIA_PORT_PLACEHOLDER
-    password: "HYSTERIA_PASSWORD_PLACEHOLDER"
-    obfs: salamander
-    obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
-    alpn:
-      - h3
-    sni: J_HYSTERIA_DOMAIN_PLACEHOLDER
-    skip-cert-verify: false
-    up: "HYSTERIA_UP_PLACEHOLDER Mbps"
-    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
-        ]
-      : []),
-    ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER
-      ? [
-          `  - name: "J-ISP2-TJ"
-    type: trojan
-    server: J_TROJAN_DOMAIN_PLACEHOLDER
-    port: ISP2_TROJAN_PORT_PLACEHOLDER
-    password: "TROJAN_PASSWORD_PLACEHOLDER"
-    udp: true
-    sni: J_TROJAN_DOMAIN_PLACEHOLDER
-    alpn:
-      - h2
-      - http/1.1
-    skip-cert-verify: false
-    client-fingerprint: chrome`,
-          `  - name: "J-ISP2-HY2"
-    type: hysteria2
-    server: J_HYSTERIA_DOMAIN_PLACEHOLDER
-    port: ISP2_HYSTERIA_PORT_PLACEHOLDER
-    password: "HYSTERIA_PASSWORD_PLACEHOLDER"
-    obfs: salamander
-    obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
-    alpn:
-      - h3
-    sni: J_HYSTERIA_DOMAIN_PLACEHOLDER
-    skip-cert-verify: false
-    up: "HYSTERIA_UP_PLACEHOLDER Mbps"
-    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
-        ]
-      : []),
-  ];
+  ]);
 
   const proxyGroupLines = proxyNames.map((name) => `      - "${name}"`).join('\n');
   const txProxyGroupLines = txProxyNames.map((name) => `      - "${name}"`).join('\n');
@@ -1839,18 +1769,22 @@ ${txBulkRuleLines}
     - 'MATCH,🐟 漏网之鱼'
 
 `;
+  const expire = entries.length > 0
+    ? Math.floor(new Date(`${entries.map((entry) => entry.expires).sort()[0]}T23:59:59Z`).getTime() / 1000)
+    : 0;
   return new Response(config, {
     status: 200,
     headers: { 
       'Content-Type': 'text/yaml; charset=utf-8', 
       'Cache-Control': 'no-cache', 
-      'Access-Control-Allow-Origin': '*' 
+      'Access-Control-Allow-Origin': '*',
+      'Subscription-Userinfo': `upload=0; download=0; total=0; expire=${expire}`
     }
   });
 }
 CJS
 
-  # 生成 Clash Verge 全局扩展脚本：任意机场仅作为 T/J 节点的前置中转。
+  # 生成 Clash Verge 全局扩展脚本：任意机场仅作为 T 节点的前置中转。
   cat > "${pages_dir}/global-extension.js" <<'GLOBALJS'
 const FINAL_GROUP_NAME = "🛡️ ISP 最终出口";
 const TX_GROUP_NAME = "📦 TX 大流量";
@@ -1878,12 +1812,15 @@ const RULESET_BASE_URL = "CLASH_RULESET_BASE_URL_PLACEHOLDER";
 const finalOverlayDomains = new Set([...AI_ISP_DOMAINS, ...IP_CHECK_DOMAINS]);
 const txOverlayDomains = new Set(TX_BULK_DOMAINS);
 
-const injectedProxies = [
+const today = new Date().toISOString().slice(0, 10);
+const ispEntries = JSON.parse(atob("ISP_PUBLIC_LIST_BASE64_PLACEHOLDER"))
+  .filter((entry) => entry.expires >= today);
+const injectedProxies = ispEntries.flatMap((entry) => [
   {
-    name: "T-ISP1-TJ",
+    name: `T-${entry.id}-TJ`,
     type: "trojan",
     server: "TROJAN_DOMAIN_PLACEHOLDER",
-    port: TROJAN_PORT_PLACEHOLDER,
+    port: entry.trojan_port,
     password: "TROJAN_PASSWORD_PLACEHOLDER",
     udp: true,
     sni: "TROJAN_DOMAIN_PLACEHOLDER",
@@ -1892,10 +1829,10 @@ const injectedProxies = [
     "client-fingerprint": "chrome",
   },
   {
-    name: "T-ISP1-HY2",
+    name: `T-${entry.id}-HY2`,
     type: "hysteria2",
     server: "HYSTERIA_DOMAIN_PLACEHOLDER",
-    port: HYSTERIA_PORT_PLACEHOLDER,
+    port: entry.hysteria_port,
     password: "HYSTERIA_PASSWORD_PLACEHOLDER",
     obfs: "salamander",
     "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
@@ -1905,97 +1842,7 @@ const injectedProxies = [
     up: "HYSTERIA_UP_PLACEHOLDER Mbps",
     down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
   },
-  ...(HAS_PROXY2_PLACEHOLDER
-    ? [
-        {
-          name: "T-ISP2-TJ",
-          type: "trojan",
-          server: "TROJAN_DOMAIN_PLACEHOLDER",
-          port: ISP2_TROJAN_PORT_PLACEHOLDER,
-          password: "TROJAN_PASSWORD_PLACEHOLDER",
-          udp: true,
-          sni: "TROJAN_DOMAIN_PLACEHOLDER",
-          alpn: ["h2", "http/1.1"],
-          "skip-cert-verify": false,
-          "client-fingerprint": "chrome",
-        },
-        {
-          name: "T-ISP2-HY2",
-          type: "hysteria2",
-          server: "HYSTERIA_DOMAIN_PLACEHOLDER",
-          port: ISP2_HYSTERIA_PORT_PLACEHOLDER,
-          password: "HYSTERIA_PASSWORD_PLACEHOLDER",
-          obfs: "salamander",
-          "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
-          alpn: ["h3"],
-          sni: "HYSTERIA_DOMAIN_PLACEHOLDER",
-          "skip-cert-verify": false,
-          up: "HYSTERIA_UP_PLACEHOLDER Mbps",
-          down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
-        },
-      ]
-    : []),
-  ...(J_ENABLED_PLACEHOLDER
-    ? [
-        {
-          name: "J-ISP1-TJ",
-          type: "trojan",
-          server: "J_TROJAN_DOMAIN_PLACEHOLDER",
-          port: TROJAN_PORT_PLACEHOLDER,
-          password: "TROJAN_PASSWORD_PLACEHOLDER",
-          udp: true,
-          sni: "J_TROJAN_DOMAIN_PLACEHOLDER",
-          alpn: ["h2", "http/1.1"],
-          "skip-cert-verify": false,
-          "client-fingerprint": "chrome",
-        },
-        {
-          name: "J-ISP1-HY2",
-          type: "hysteria2",
-          server: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
-          port: HYSTERIA_PORT_PLACEHOLDER,
-          password: "HYSTERIA_PASSWORD_PLACEHOLDER",
-          obfs: "salamander",
-          "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
-          alpn: ["h3"],
-          sni: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
-          "skip-cert-verify": false,
-          up: "HYSTERIA_UP_PLACEHOLDER Mbps",
-          down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
-        },
-      ]
-    : []),
-  ...(J_ENABLED_PLACEHOLDER && HAS_PROXY2_PLACEHOLDER
-    ? [
-        {
-          name: "J-ISP2-TJ",
-          type: "trojan",
-          server: "J_TROJAN_DOMAIN_PLACEHOLDER",
-          port: ISP2_TROJAN_PORT_PLACEHOLDER,
-          password: "TROJAN_PASSWORD_PLACEHOLDER",
-          udp: true,
-          sni: "J_TROJAN_DOMAIN_PLACEHOLDER",
-          alpn: ["h2", "http/1.1"],
-          "skip-cert-verify": false,
-          "client-fingerprint": "chrome",
-        },
-        {
-          name: "J-ISP2-HY2",
-          type: "hysteria2",
-          server: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
-          port: ISP2_HYSTERIA_PORT_PLACEHOLDER,
-          password: "HYSTERIA_PASSWORD_PLACEHOLDER",
-          obfs: "salamander",
-          "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
-          alpn: ["h3"],
-          sni: "J_HYSTERIA_DOMAIN_PLACEHOLDER",
-          "skip-cert-verify": false,
-          up: "HYSTERIA_UP_PLACEHOLDER Mbps",
-          down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
-        },
-      ]
-    : []),
-];
+]);
 
 const txNodeNames = injectedProxies
   .map((proxy) => proxy.name)
@@ -2179,14 +2026,8 @@ GLOBALJS
   sed -i "s|HIDDEN_SUB_URL_PLACEHOLDER|${hidden_sub_url}|g" "${functions_dir}/c.js"
   sed -i "s|SUB_REMARKS_LOWER_PLACEHOLDER|${sub_remarks_lower}|g" "${functions_dir}/c.js"
   sed -i "s|SUB_REMARKS_PLACEHOLDER|${SUB_REMARKS:-US-ISP}|g" "${functions_dir}/c.js"
-  sed -i "s|J_TROJAN_DOMAIN_PLACEHOLDER|${J_TROJAN_DOMAIN:-}|g" "${functions_dir}/c.js"
-  sed -i "s|J_HYSTERIA_DOMAIN_PLACEHOLDER|${J_HYSTERIA_DOMAIN:-}|g" "${functions_dir}/c.js"
   sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${functions_dir}/c.js"
-  sed -i "s|ISP2_TROJAN_PORT_PLACEHOLDER|${ISP2_TROJAN_PORT}|g" "${functions_dir}/c.js"
-  sed -i "s|ISP2_HYSTERIA_PORT_PLACEHOLDER|${ISP2_HYSTERIA_PORT}|g" "${functions_dir}/c.js"
-  sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${functions_dir}/c.js"
-  sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${functions_dir}/c.js"
   sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${TROJAN_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${HYSTERIA_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${HYSTERIA_OBFS_PASSWORD}|g" "${functions_dir}/c.js"
@@ -2194,27 +2035,19 @@ GLOBALJS
   sed -i "s|DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER|${direct_bulk_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_ENABLED_PLACEHOLDER|${direct_bulk_enabled_js}|g" "${functions_dir}/c.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${functions_dir}/c.js"
-  sed -i "s|HAS_PROXY2_PLACEHOLDER|$([[ ${HAS_PROXY2} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/c.js"
-  sed -i "s|J_ENABLED_PLACEHOLDER|$([[ ${HAS_VPS_J} -eq 1 ]] && echo true || echo false)|g" "${functions_dir}/c.js"
+  sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${functions_dir}/c.js"
 
   sed -i "s|AI_ISP_DOMAINS_JSON_PLACEHOLDER|${ai_isp_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|${direct_bulk_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${pages_dir}/global-extension.js"
-  sed -i "s|J_TROJAN_DOMAIN_PLACEHOLDER|${J_TROJAN_DOMAIN:-}|g" "${pages_dir}/global-extension.js"
-  sed -i "s|J_HYSTERIA_DOMAIN_PLACEHOLDER|${J_HYSTERIA_DOMAIN:-}|g" "${pages_dir}/global-extension.js"
   sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${pages_dir}/global-extension.js"
-  sed -i "s|ISP2_TROJAN_PORT_PLACEHOLDER|${ISP2_TROJAN_PORT}|g" "${pages_dir}/global-extension.js"
-  sed -i "s|ISP2_HYSTERIA_PORT_PLACEHOLDER|${ISP2_HYSTERIA_PORT}|g" "${pages_dir}/global-extension.js"
-  sed -i "s|TROJAN_PORT_PLACEHOLDER|${TROJAN_PORT}|g" "${pages_dir}/global-extension.js"
-  sed -i "s|HYSTERIA_PORT_PLACEHOLDER|${HYSTERIA_PORT}|g" "${pages_dir}/global-extension.js"
   sed -i "s|TROJAN_PASSWORD_PLACEHOLDER|${TROJAN_PASSWORD}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${HYSTERIA_PASSWORD}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${HYSTERIA_OBFS_PASSWORD}|g" "${pages_dir}/global-extension.js"
-  sed -i "s|HAS_PROXY2_PLACEHOLDER|$([[ ${HAS_PROXY2} -eq 1 ]] && echo true || echo false)|g" "${pages_dir}/global-extension.js"
-  sed -i "s|J_ENABLED_PLACEHOLDER|$([[ ${HAS_VPS_J} -eq 1 ]] && echo true || echo false)|g" "${pages_dir}/global-extension.js"
+  sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${pages_dir}/global-extension.js"
   
