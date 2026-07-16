@@ -854,7 +854,7 @@ setup_egress_monitor() {
 set -Eeuo pipefail
 
 ENV_FILE="__ENV_FILE__"
-ISP_LIST_FILE="__ISP_LIST_FILE__"
+CONFIGURED_ISP_LIST_FILE="__ISP_LIST_FILE__"
 STATE_DIR="/var/lib/sing-box-egress-monitor"
 STATE_FILE="${STATE_DIR}/last-status"
 
@@ -959,6 +959,8 @@ main() {
   mkdir -p "${STATE_DIR}"
   chmod 700 "${STATE_DIR}"
   load_env_safe
+  # .env 中允许使用相对路径；安装阶段已将其解析为绝对路径。
+  ISP_LIST_FILE="${CONFIGURED_ISP_LIST_FILE}"
 
   local check_url="${EGRESS_CHECK_URL:-https://ipinfo.io/ip}"
   local problems=()
