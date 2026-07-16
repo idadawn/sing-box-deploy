@@ -5,7 +5,7 @@
 - `Clash` 与 `v2rayN / v2rayNG` 订阅由私有 ISP 清单动态生成
 - `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
 - 主页从部署时生成的 `subscriptions.json` 自动展示每个编号的独立订阅和到期日（不公开 ISP 凭据）
-- 单 ISP Clash 订阅通过 `Profile-Title` 和下载文件名自动显示为对应编号
+- 单 ISP Clash 订阅通过 `Profile-Title` 自动显示为对应编号；不发送文件名响应头，避免部分客户端把引号或 `.yaml` 误当作订阅名
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
