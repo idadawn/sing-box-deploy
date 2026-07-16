@@ -4,7 +4,7 @@
 
 - `Clash` 与 `v2rayN / v2rayNG` 订阅由私有 ISP 清单动态生成
 - `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
-- 主页从部署时生成的 `subscriptions.json` 自动展示每个编号的独立订阅和到期日（不公开 ISP 凭据）
+- 主页从部署时生成的 `subscriptions.json` 读取独立订阅和到期日；`homepageHiddenIds` 可隐藏私用编号（只隐藏界面，不构成访问控制）
 - 单 ISP Clash 订阅同时返回 `Profile-Title: <编号>` 与无引号、无扩展名的 `filename=<编号>`，兼容采用不同响应头命名的客户端
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
@@ -20,6 +20,8 @@
 - **Clash Verge 全局扩展脚本**: `https://<SUB_DOMAIN>/s`
 
 其中 `SUB_DOMAIN` 在根目录 `.env` 中配置。
+
+> `/v2`、`/c` 和 `/s` 包含节点凭据。随机路径或首页隐藏不能替代鉴权，订阅地址应按敏感信息管理。
 
 ## 目录结构
 

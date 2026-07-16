@@ -1,239 +1,351 @@
-# sing-box 自动化部署方案
+# sing-box 多 ISP 固定出口部署
 
-Debian / Ubuntu 一键部署 **Trojan + Hysteria2** 中继服务器。当前仅部署到 `T` 服务器，并从私有 TSV 清单加载任意数量的 ISP SOCKS5 出口。每个未到期 ISP 都会生成独立入口节点和独立 v2ray/Clash 订阅链接；AI 与普通流量固定使用该订阅对应的 ISP。视频/CDN/软件包下载仍可显式配置为 T 服务器直出。J 服务器已退役，脚本会拒绝任何 `J_*` 配置。
+在 Debian / Ubuntu 上部署一台 sing-box 接入服务器，并把不同入口固定映射到私有 ISP SOCKS5 出口。每个未到期的 ISP 条目会生成一组 Trojan、Hysteria2 节点和独立订阅，适合需要稳定、可识别出口且不允许静默跨 ISP 回落的个人环境。
 
-## 架构概览
+本仓库是纯技术实现，不绑定、推荐或推广任何服务器、代理或网络服务提供商。
 
+> 当前只维护 `T` 接入服务器。旧 `J` 服务器已经退役，安装脚本会拒绝残留的 `J_*` 配置。
+
+## 设计目标
+
+- 一个 ISP 编号对应一个固定出口，不在不同 ISP 之间自动切换。
+- 同时提供 Trojan/TCP 与 Hysteria2/UDP，覆盖不同网络条件。
+- 默认失败关闭：未命中明确规则的服务端流量由 `route.final=block` 拒绝。
+- ISP 地址、账号和密码只保存在服务器本地私有 TSV 文件中。
+- 自动生成 v2rayN/v2rayNG 与 Clash/Mihomo 订阅，并发布到 Cloudflare Pages。
+- 自动同步并校验 Clash 规则快照，失败时继续使用上一版。
+- 支持出口健康检查、systemd 定时任务和可选 SMTP 告警。
+
+## 架构
+
+```text
+v2rayN / v2rayNG / Clash / Mihomo
+                │
+      ┌─────────┴─────────┐
+      │                   │
+Trojan/TCP           Hysteria2/UDP
+      │                   │
+      └─────────┬─────────┘
+                │
+         T sing-box 接入服务器
+                │
+      ┌─────────┴────────────┐
+      │                      │
+AI 与普通流量          指定的大流量域名
+      │                      │
+当前订阅对应 ISP        T 公网直出（可选）
+   SOCKS5
 ```
-客户端 (v2rayN / Clash)
-    │
-    └── T-<ISP编号>-TJ / T-<ISP编号>-HY2
-              │
-       T sing-box 接入服务器
-              │
-       ┌──────┴──────────┐
-       │                 │
-  AI / 普通流量      视频 / 大文件（可选）
-       │                 │
-  订阅对应 ISP        当前服务器直出
-     SOCKS5
-```
 
-## 前置要求
+每个 ISP 条目生成两个客户端节点：
 
-- Debian 10+ 或 Ubuntu 20.04+，root 权限
-- 已购买 ISP SOCKS5 代理（如 1024proxy）
-- Cloudflare 托管的域名，T 机至少两条 A 记录（均为 DNS Only 灰云）
-- Cloudflare API Token（Zone:DNS:Edit 权限）
+- `T-<编号>-TJ`
+- `T-<编号>-HY2`
 
-## 快速开始
+两个节点只代表不同的接入协议，服务端最终出口相同。
 
-### 1. 克隆并配置
+## 能力边界
+
+本方案提供固定出口、订阅生成和基础自动运维，但不等同于完整的高可用平台：
+
+- T 是唯一接入服务器，服务器、机房或上游网络故障会影响全部节点。
+- ISP 故障时默认不会切换到另一个 ISP，也不会回落到 T 公网出口。
+- Cloudflare Pages 只负责订阅和规则文件分发，不承载 Trojan/Hysteria2 流量。
+- 当前 Trojan、Hysteria2 和混淆密码分别按协议全局共享；任一同协议订阅泄漏后需要轮换该协议的全部节点。
+- 首页隐藏某个编号只影响页面展示，不是访问控制；知道订阅 URL 的人仍可请求该订阅。
+- `/v2`、`/c` 与 `/s` 的响应包含客户端节点凭据，必须按敏感信息管理。
+
+## 前置条件
+
+- Debian 10+ 或 Ubuntu 20.04+。
+- root 或 sudo 权限。
+- 一台具有公网 IPv4 的接入服务器。
+- 至少一个可用的 ISP SOCKS5 出口。
+- 由 Cloudflare 托管的域名。
+- 两个指向接入服务器的 DNS Only A 记录，分别用于 Trojan 和 Hysteria2。
+- 用于 DNS-01 证书签发的 Cloudflare DNS API Token。
+- 如需自动发布订阅，还需 Cloudflare Pages 项目、Account ID 与 Pages API Token。
+
+云平台安全组和服务器防火墙必须同时放行实际使用的 TCP、UDP 入站端口。
+
+## 快速部署
 
 ```bash
-git clone https://github.com/yourname/sing-box-deploy.git
+git clone https://github.com/idadawn/sing-box-deploy.git
 cd sing-box-deploy
+
 cp .env.example .env
 cp isp-list.example.tsv isp-list.tsv
-nano .env   # 填写所有必填项
-nano isp-list.tsv  # 填写私有 ISP 清单并 chmod 600
-```
 
-`.env` 中的关键变量：
+chmod 600 .env isp-list.tsv
+nano .env
+nano isp-list.tsv
 
-| 变量 | 说明 |
-|------|------|
-| `TROJAN_DOMAIN` | Trojan 入口域名（灰云 A 记录） |
-| `HYSTERIA_DOMAIN` | Hysteria2 入口域名（灰云 A 记录） |
-| `CF_DNS_EDIT_TOKEN` | Cloudflare DNS:Edit Token（申请证书用） |
-| `ACME_EMAIL` | Let's Encrypt 注册邮箱 |
-| `ISP_LIST_FILE` | 私有 TSV 清单路径，默认 `isp-list.tsv`；必须为 600 权限且不会进入 Git |
-| `ISP_PORT_STEP` | 后续 ISP 的 Trojan/Hysteria2 入站端口偏移，默认 10000 |
-| `AI_ISP_DOMAINS` | 可选，始终走当前订阅对应 ISP 的 AI 域名清单；留空使用内置清单 |
-| `DIRECT_BULK_ENABLED` | 是否让视频/CDN/软件下载从当前服务器直出；建议仅 T 设置为 `true` |
-| `DIRECT_BULK_DOMAINS` | 可选，直出域名清单；留空使用内置清单 |
-| `CLASH_RULESET_BASE_URL` | 可选，客户端规则地址；留空使用 `https://<SUB_DOMAIN>/rules` 自托管镜像 |
-| `CLASH_RULESET_UPSTREAM_REPO/BRANCH` | 可选，每日同步的上游仓库与分支，默认 Loyalsoldier `release` |
-| `TROJAN_PASSWORD` | Trojan 入站密码 |
-| `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
-| `CF_API_TOKEN` + `CF_ACCOUNT_ID` | Cloudflare Pages 部署凭据 |
-| `SUB_DOMAIN` | 订阅托管域名 |
-| `SMTP_ALERT_ENABLED` + `SMTP_*` | 可选，开启中继服务与 ISP 出口异常邮件告警 |
-
-ISP 清单固定为 7 列 TSV：`编号`、`IP`、`http端口`、`socks5端口`、`user`、`pwd`、`到期时间`。行顺序决定入站端口槽位；请保留已到期行以避免后续 ISP 的端口发生漂移。安装时会跳过已到期行，订阅接口也会按日期实时拒绝过期编号。
-
-### 2. 部署
-
-```bash
-chmod +x install.sh
+chmod +x install.sh manage.sh sync-clash-rules.sh
 sudo ./install.sh
 ```
 
-脚本将自动完成：
+安装脚本会完成：
 
-1. 安装 sing-box（官方 APT 仓库）
-2. 申请 TLS 证书（Let's Encrypt DNS-01）
-3. 生成并部署 `/etc/sing-box/config.json`
-4. 配置 UFW 防火墙
-5. 生成订阅文件并部署到 Cloudflare Pages
-6. 启用每日 Loyalsoldier 规则同步定时器
-7. 可选启用 systemd 定时出口监控与 SMTP 邮件告警
+1. 安装或更新 sing-box 及基础依赖。
+2. 通过 Cloudflare DNS-01 申请 TLS 证书。
+3. 根据 ISP 清单生成 `/etc/sing-box/config.json`。
+4. 校验配置并部署 systemd 服务。
+5. 按配置更新 UFW。
+6. 生成订阅、首页、Clash 扩展脚本和规则镜像。
+7. 发布 Cloudflare Pages。
+8. 安装规则同步与可选出口监控定时器。
 
-### 3. 客户端订阅
+## ISP 清单
 
-| 客户端 | 订阅链接 |
-|--------|----------|
-| v2rayN（全部 ISP） | `https://<SUB_DOMAIN>/v2` |
-| Clash（全部 ISP）  | `https://<SUB_DOMAIN>/c`  |
-| v2rayN（单个 ISP） | `https://<SUB_DOMAIN>/v2?isp=<编号>` |
-| Clash（单个 ISP）  | `https://<SUB_DOMAIN>/c?isp=<编号>` |
+`ISP_LIST_FILE` 指向一个 7 列 TSV 文件：
+
+```text
+编号	IP	HTTP端口	SOCKS5端口	user	pwd	到期时间
+demo	203.0.113.10	3128	1080	example-user	example-password	2026-12-31
+```
+
+约束：
+
+- 列顺序固定，字段之间使用 Tab。
+- 文件权限必须是 `600`。
+- 文件已加入 `.gitignore`，不得提交到 Git。
+- 编号只能使用脚本允许的安全字符，并且必须唯一。
+- 行顺序决定入站端口槽位；不要随意重排或删除旧行。
+- 已到期条目不会进入运行配置，订阅接口会对未知或过期编号返回 HTTP 410。
+
+后续条目的端口计算方式：
+
+```text
+Trojan 端口    = TROJAN_PORT + 行槽位 × ISP_PORT_STEP
+Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
+```
+
+## 核心配置
+
+### 接入与证书
+
+| 变量 | 用途 |
+| --- | --- |
+| `TROJAN_DOMAIN` | Trojan 入口域名，必须使用 DNS Only |
+| `HYSTERIA_DOMAIN` | Hysteria2 入口域名，必须使用 DNS Only |
+| `TROJAN_PORT` | 第一条 ISP 的 Trojan 端口 |
+| `HYSTERIA_PORT` | 第一条 ISP 的 Hysteria2 端口 |
+| `ISP_PORT_STEP` | 后续 ISP 的端口偏移 |
+| `CF_DNS_EDIT_TOKEN` | DNS-01 证书签发所需 Token |
+| `ACME_EMAIL` | ACME 注册邮箱 |
+
+### 认证与出口
+
+| 变量 | 用途 |
+| --- | --- |
+| `ISP_LIST_FILE` | 私有 ISP TSV 清单路径 |
+| `TROJAN_PASSWORD` | Trojan 入站密码 |
+| `HYSTERIA_PASSWORD` | Hysteria2 入站密码 |
+| `HYSTERIA_OBFS_PASSWORD` | Hysteria2 Salamander 混淆密码 |
+| `AI_ISP_DOMAINS` | 必须走当前 ISP 的 AI 域名，留空使用内置清单 |
+| `DIRECT_BULK_ENABLED` | 是否允许指定大流量域名从 T 公网直出 |
+| `DIRECT_BULK_DOMAINS` | 自定义大流量直出域名 |
+
+### 订阅与规则
+
+| 变量 | 用途 |
+| --- | --- |
+| `SUB_DOMAIN` | Pages 订阅域名 |
+| `CF_ACCOUNT_ID` | Cloudflare Account ID |
+| `CF_API_TOKEN` | Pages 部署 Token |
+| `CF_PAGES_PROJECT` | Pages 项目名 |
+| `CLASH_RULESET_BASE_URL` | Clash 规则地址，留空使用当前 Pages 镜像 |
+| `CLASH_RULESET_UPSTREAM_REPO` | 规则上游仓库 |
+| `CLASH_RULESET_UPSTREAM_BRANCH` | 规则上游分支 |
+
+### 运维
+
+| 变量 | 用途 |
+| --- | --- |
+| `ENABLE_UFW` | 是否由脚本维护 UFW |
+| `SSH_PORT` | 需要保留的 SSH 端口 |
+| `LOG_LEVEL` | sing-box 日志级别 |
+| `SMTP_ALERT_ENABLED` | 是否启用出口异常邮件告警 |
+| `SMTP_*` | SMTP 连接与收件配置 |
+
+完整字段和默认值见 [`.env.example`](.env.example)。
+
+## 路由语义
+
+| 流量 | 服务端出口 |
+| --- | --- |
+| AI 域名 | 当前入口绑定的 ISP SOCKS5 |
+| 普通互联网流量 | 当前入口绑定的 ISP SOCKS5 |
+| 指定大流量域名 | `DIRECT_BULK_ENABLED=true` 时使用 T 公网直出 |
+| 未匹配或异常流量 | `block` |
+
+关键原则：
+
+- AI 规则优先于大流量直出规则。
+- 不会从当前 ISP 静默切换到其他 ISP。
+- 不会把 T 公网 IP 当作通用兜底出口。
+- 只有显式列入大流量规则的域名可以使用 `direct-out`。
+- 对出口一致性要求最高时，应保持 `DIRECT_BULK_ENABLED=false`。
+
+## 订阅
+
+| 类型 | URL |
+| --- | --- |
+| v2rayN/v2rayNG 全量订阅 | `https://<SUB_DOMAIN>/v2` |
+| Clash/Mihomo 全量订阅 | `https://<SUB_DOMAIN>/c` |
+| 单 ISP v2rayN/v2rayNG | `https://<SUB_DOMAIN>/v2?isp=<编号>` |
+| 单 ISP Clash/Mihomo | `https://<SUB_DOMAIN>/c?isp=<编号>` |
 | Clash Verge 全局扩展脚本 | `https://<SUB_DOMAIN>/s` |
 
-- 每个单 ISP 链接只包含 `T-<编号>-TJ` 与 `T-<编号>-HY2` 两个入口节点
-- 订阅主页自动列出每个有效编号；单 ISP Clash 订阅名称通过 `Profile-Title` 自动显示为该编号
-- 不带 `isp` 参数的兼容链接仍返回全部未到期 ISP 节点
-- AI 域名在服务端优先匹配当前入口对应的 ISP，不会跨 ISP，也不会落到服务器直出
-- 如需同时使用任意第三方机场，将 `/s` 的内容粘贴到 Clash Verge 的全局扩展脚本。脚本会把原机场节点放入 `🛫 机场中转`，并让注入的 T 节点通过该组建立连接；机场不会成为网站最终出口
-- `DIRECT_BULK_ENABLED=true` 时，仅内置或自定义的视频/CDN/软件下载域名使用 T 服务器公网 IP
-- 服务端每天在北京时间 07:15 后同步 Loyalsoldier `release`，全部文件校验通过后才替换并发布；客户端通过 `rule-providers` 每天读取自托管镜像
-- 自定义 AI 与 TX 大流量规则始终优先于上游通用规则
-- Clash 订阅默认关闭 IPv6，并保留 Apple / iCloud 分流规则，以降低 iOS 推送异常和 IPv6 泄漏风险
+单 ISP 订阅只返回该编号的 Trojan 与 Hysteria2 节点。Clash 响应使用以下响应头保持客户端显示名稳定：
 
-### 服务端分流优先级
+```text
+Profile-Title: <编号>
+Content-Disposition: attachment; filename=<编号>
+```
 
-1. AI 域名优先匹配并发送到当前入口对应的 ISP，覆盖 OpenAI、Claude、Gemini、Copilot、DeepSeek、Perplexity、OpenRouter、Mistral、Groq、Cursor 等常用服务。
-2. 启用高带宽直出后，YouTube、Twitch、Vimeo、Hugging Face、OneDrive/SharePoint，以及 Python、Node/npm、GitHub Releases、Docker、Rust、Go、Maven、Linux/Windows/macOS 更新等域名发送到 `direct-out`。
-3. Netflix、Disney、Hulu 等依赖地区解锁的流媒体不在直出清单中，仍使用 ISP。
-4. 其余客户端流量按入口发送到对应 ISP；`route.final` 保持 `block`，不存在跨 ISP 或通用 VPS 兜底。
+`filename` 不添加引号和 `.yaml` 后缀，以兼容采用不同响应头解析方式的客户端。
 
-AI 规则排在直出规则之前。例如 `copilot-proxy.githubusercontent.com` 即使同时命中 GitHub 下载域名，也仍会使用 ISP。两份域名清单都可通过 `.env` 覆盖。
+### 首页可见性
 
-Clash 客户端中的 `📦 TX 大流量` 组只包含 T 节点，确保上述下载流量先进入 T，再由服务端 `direct-out` 直出。Loyalsoldier 的 `proxy.txt` 本身包含 Hugging Face 和 OneDrive 域名，但本项目的自定义规则位于 `RULE-SET` 之前，因此不会被上游策略覆盖。
+首页读取部署时生成的 `subscriptions.json`。该文件只包含编号、到期时间和订阅路径，不包含 ISP 地址、账号或密码。
+
+`cloudflare-pages-sub/index.html` 中的 `homepageHiddenIds` 可以隐藏私用编号。此设置只隐藏首页列表和详情，不会阻止 `/v2?isp=<编号>` 或 `/c?isp=<编号>` 访问。需要真正限制访问时，应在 Pages Functions 中增加令牌校验。
 
 ### Clash Verge 全局扩展脚本
 
-1. 保留并启用任意机场订阅。
-2. 打开 `https://<SUB_DOMAIN>/s`，将完整内容粘贴到 Clash Verge 的“全局扩展脚本”。
-3. 保存并更新机场配置。页面会出现 `🛡️ ISP 最终出口`、`📦 TX 大流量` 和 `🛫 机场中转` 三个组。
+`/s` 用于把本项目节点和规则接入已有 Clash 配置。扩展脚本会保留原配置节点，并增加固定 ISP 出口、大流量直出和中转策略组。
 
-脚本会自动接入同一套 Loyalsoldier 规则，并重写机场原有代理策略：AI、IP 检测和最终兜底使用 T -> ISP，视频和下载使用 T -> `direct-out`，局域网、中国大陆和上游 `direct` 规则仍在本机直连。`/s` 与 `/c` 一样包含节点凭据，请勿公开转发。
+`/s` 同样含有节点凭据，不应公开转发。
 
-### 4. 管理
+## 规则同步
+
+`clash-rules-sync.timer` 每天触发一次同步：
+
+1. 拉取指定上游分支。
+2. 校验所需规则文件完整性。
+3. 只有全部检查成功才原子替换当前快照。
+4. 重新发布 Cloudflare Pages。
+5. 同步失败时保留上一版可用规则。
+
+手动执行：
 
 ```bash
-./manage.sh   # 交互式管理菜单
+sudo ./sync-clash-rules.sh --deploy
+systemctl list-timers clash-rules-sync.timer
+journalctl -u clash-rules-sync.service -n 100 --no-pager
 ```
 
-菜单选项：状态查看、日志追踪、服务重启、出口 IP 测试、配置检查、备份、卸载。
+## 运维
 
-## 常用命令
+### 管理菜单
 
 ```bash
-# 检查服务状态
+sudo ./manage.sh
+```
+
+支持查看状态、追踪日志、重启服务、检查配置、测试 ISP 出口、管理备份和卸载。
+
+### 常用命令
+
+```bash
+# 服务状态
 systemctl status sing-box
 
 # 实时日志
 journalctl -u sing-box -f
 
-# 验证配置语法
+# 配置校验
 sing-box check -c /etc/sing-box/config.json
 
-# 通过管理菜单测试清单中的全部 ISP SOCKS5 出口
-sudo ./manage.sh
+# 当前监听端口
+ss -tulnp | grep sing-box
 
-# 手动部署 Cloudflare Pages 订阅
-cd cloudflare-pages-sub && wrangler pages deploy .
+# 出口监控
+systemctl status sing-box-egress-monitor.timer
+journalctl -u sing-box-egress-monitor.service -n 100 --no-pager
 
-# 立即同步规则并发布（定时服务也执行这条命令）
-sudo ./sync-clash-rules.sh --deploy
-
-# 查看每日同步计划与日志
-systemctl list-timers clash-rules-sync.timer
+# 规则同步
+systemctl status clash-rules-sync.timer
 journalctl -u clash-rules-sync.service -n 100 --no-pager
 ```
 
-## 安装选项
+### 安装选项
 
 ```bash
-sudo ./install.sh                    # 完整部署
-sudo ./install.sh --force-reinstall  # 强制重装 sing-box 包
-sudo ./install.sh --skip-firewall    # 跳过 UFW 配置
-sudo ./install.sh --no-start         # 仅部署配置，不启动服务
+sudo ./install.sh
+sudo ./install.sh --force-reinstall
+sudo ./install.sh --skip-firewall
+sudo ./install.sh --no-start
 ```
 
-## 目录结构
+## 安全清单
 
-```
-sing-box-deploy/
-├── install.sh                        # 主部署脚本
-├── sync-clash-rules.sh               # 上游规则原子同步与 Pages 发布
-├── systemd/                           # 每日规则同步 service/timer 模板
-├── manage.sh                         # 管理菜单
-├── .env.example                      # 配置模板（复制为 .env 使用）
-├── .env                              # 实际配置（已加入 .gitignore）
-├── isp-list.example.tsv              # ISP 清单字段示例（无真实凭据）
-├── isp-list.tsv                      # 私有 ISP 清单（已加入 .gitignore，权限 600）
-└── cloudflare-pages-sub/
-    ├── functions/
-    │   ├── v2.js                     # v2rayN 订阅（由 install.sh 生成）
-    │   └── c.js                      # Clash 订阅（由 install.sh 生成）
-    ├── global-extension.js           # Clash Verge 全局扩展脚本（由 install.sh 生成）
-    ├── rules/                         # 已校验的 Loyalsoldier 快照（定时生成）
-    ├── _redirects                    # 重定向规则（由 install.sh 生成）
-    ├── index.html                    # Pages 占位页
-    ├── wrangler.toml                 # Wrangler 配置
-    └── package.json
-```
-
-## Cloudflare 配置要求
-
-- `TROJAN_DOMAIN` 和 `HYSTERIA_DOMAIN` 必须是 **DNS Only（灰云）**
-- 不能开启 Cloudflare 代理（橙云），否则 TLS 握手会失败
-- A 记录指向 T 接入服务器的公网 IP；默认出口由 ISP SOCKS5 决定，只有显式启用的高带宽域名使用当前服务器直出
-
-## 证书说明
-
-- 使用 Let's Encrypt + Cloudflare DNS-01 挑战自动申请
-- 证书保存在 `/var/lib/sing-box/certmagic/`，自动续期
+- `.env` 与 `isp-list.tsv` 使用 `600` 权限。
+- 不在 Git、Issue、日志或聊天中粘贴真实 ISP 凭据。
+- 为 Trojan、Hysteria2、混淆、Clash Controller 和订阅访问使用不同密钥。
+- Cloudflare Token 只授予所需账户、Zone 和最小权限。
+- 定期轮换入口密码与 Pages 部署 Token。
+- 不把首页隐藏、随机路径或难猜 URL 当作身份认证。
+- 订阅泄漏后应轮换入口凭据，而不是只更换订阅 URL。
+- 保留 `route.final=block`，除非明确接受未知流量的出口变化。
+- 在云安全组和 UFW 中只开放当前配置使用的端口。
 
 ## 故障排查
 
-```bash
-# 查看日志
-journalctl -u sing-box -f
+### 客户端无法连接
 
-# 检查配置语法
+```bash
+systemctl is-active sing-box
 sing-box check -c /etc/sing-box/config.json
-
-# 检查端口监听
-ss -tulnp | grep -E ':443|:8443'
+ss -tulnp | grep sing-box
+ufw status numbered
 ```
 
-## 卸载
+同时检查云平台安全组、DNS 解析、TLS 域名和客户端系统时间。Trojan 使用 TCP，Hysteria2 使用 UDP，两类规则需要分别放行。
+
+### 节点可连接但出口错误
 
 ```bash
-./manage.sh   # 选择选项 8
+sudo ./manage.sh
+journalctl -u sing-box-egress-monitor.service -n 100 --no-pager
 ```
 
-## 服务提供商参考
+确认 ISP 清单行顺序未改变，SOCKS5 账号仍有效，并检查 `/etc/sing-box/config.json` 中入口到 `isp-out-<编号>` 的映射。
 
-本方案在实际使用中采用了以下服务商（供参考，非强制要求）：
+### 订阅更新失败
 
-### 中继服务器提供商：极络云
+```bash
+curl -I 'https://<SUB_DOMAIN>/c?isp=<编号>'
+curl -I 'https://<SUB_DOMAIN>/v2?isp=<编号>'
+journalctl -u clash-rules-sync.service -n 100 --no-pager
+```
 
-本项目实际部署使用的海外中继服务器服务商。中继服务器主要用于承载 Trojan / Hysteria2 入站与转发流量，不建议作为 OpenAI / Claude 等高风控服务的最终出口。
+未知或过期编号返回 HTTP 410。Pages 发布成功但自定义域名仍是旧页面时，需要等待边缘缓存刷新。
 
-- 官网: https://www.jiluoyun.com/whmcs
-- 推广链接: https://www.jiluoyun.com/whmcs/aff.php?aff=24 （支持本项目可使用此链接注册）
+## 目录结构
 
-### ISP 代理：1024proxy
-
-本项目实际使用的 ISP SOCKS5 代理服务商，提供稳定的住宅 IP 出口。
-
-- 官网: https://1024proxy.com/
-- 推广链接: https://api.1024proxy.com/share/7wstuqogm （支持本项目可使用此链接注册）
-
-> 说明：以上链接为作者实际使用的服务商，推广链接仅供参考。您可以根据自己的需求选择其他服务商，本项目不依赖特定提供商。
+```text
+sing-box-deploy/
+├── install.sh
+├── manage.sh
+├── sync-clash-rules.sh
+├── setup-ssh.sh
+├── .env.example
+├── isp-list.example.tsv
+├── systemd/
+│   ├── clash-rules-sync.service.in
+│   └── clash-rules-sync.timer
+└── cloudflare-pages-sub/
+    ├── functions/             # 部署时生成，不进入 Git
+    ├── rules/                 # 同步生成的规则快照
+    ├── index.html
+    ├── global-extension.js    # 部署时生成
+    ├── subscriptions.json     # 部署时生成
+    ├── wrangler.toml
+    └── README.md
+```
 
 ## License
 
