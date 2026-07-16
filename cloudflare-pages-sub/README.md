@@ -4,6 +4,8 @@
 
 - `Clash` 与 `v2rayN / v2rayNG` 订阅由私有 ISP 清单动态生成
 - `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
+- 主页从部署时生成的 `subscriptions.json` 自动展示每个编号的独立订阅和到期日（不公开 ISP 凭据）
+- 单 ISP Clash 订阅通过 `Profile-Title` 和下载文件名自动显示为对应编号
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
@@ -28,6 +30,7 @@ cloudflare-pages-sub/
 │   └── c.js             # Clash 订阅接口 (/c)
 ├── _redirects           # 重定向规则（由 install.sh 生成）
 ├── global-extension.js  # 任意机场的全局扩展脚本（由 install.sh 生成）
+├── subscriptions.json   # 主页公开订阅清单（由 install.sh 生成，不含凭据）
 ├── rules/               # Loyalsoldier 规则快照（由定时服务生成）
 ├── index.html           # 订阅入口页面
 ├── package.json         # 项目配置

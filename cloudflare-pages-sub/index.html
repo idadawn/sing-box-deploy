@@ -70,6 +70,17 @@
       margin: 0 0 10px;
       font-size: 22px;
     }
+    .card-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .card-head h2 { margin: 0; }
+    .expiry { color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .isp-card .mono { margin: 10px 0; }
+    .loading { color: var(--muted); text-align: center; grid-column: 1 / -1; }
     .card p {
       margin: 0 0 14px;
       color: var(--muted);
@@ -181,6 +192,13 @@
     </div>
 
     <div class="block">
+      <h3>我的独立订阅</h3>
+      <div id="ispGrid" class="grid">
+        <p class="loading">正在加载订阅列表…</p>
+      </div>
+    </div>
+
+    <div class="block">
       <h3>订阅地址</h3>
       <div class="mono">v2rayN / v2rayNG：<span id="v2Url"></span></div>
       <div class="mono">Clash / Mihomo：<span id="cUrl"></span></div>
@@ -227,6 +245,49 @@
     document.getElementById('v2rayngLink').href = `v2rayng://install-config/?url=${encodeURIComponent(v2Url)}`;
     document.getElementById('clashLink').href = `clash://install-config?url=${encodeURIComponent(cUrl)}`;
 
+    function absoluteUrl(path) {
+      return new URL(path, base).toString();
+    }
+
+    function renderSubscriptions(entries) {
+      const grid = document.getElementById('ispGrid');
+      if (!Array.isArray(entries) || entries.length === 0) {
+        grid.innerHTML = '<p class="loading">当前没有可用的独立订阅。</p>';
+        return;
+      }
+
+      grid.innerHTML = '';
+      entries.forEach((entry) => {
+        const v2 = absoluteUrl(entry.v2);
+        const clash = absoluteUrl(entry.clash);
+        const card = document.createElement('article');
+        card.className = 'card isp-card';
+        card.innerHTML = `
+          <div class="card-head">
+            <h2>${escapeHtml(entry.id)}</h2>
+            <span class="expiry">到期 ${escapeHtml(entry.expires)}</span>
+          </div>
+          <div class="mono">v2：${escapeHtml(v2)}</div>
+          <div class="mono">Clash：${escapeHtml(clash)}</div>
+          <div class="actions">
+            <button class="btn primary" data-url="${escapeHtml(v2)}">复制 v2</button>
+            <button class="btn secondary" data-url="${escapeHtml(clash)}">复制 Clash</button>
+            <a class="btn ghost" href="clash://install-config?url=${encodeURIComponent(clash)}">导入 Clash</a>
+          </div>`;
+        grid.appendChild(card);
+      });
+
+      grid.querySelectorAll('[data-url]').forEach((button) => {
+        button.addEventListener('click', () => copyText(button.dataset.url));
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, (character) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      })[character]);
+    }
+
     async function copyText(text) {
       try {
         await navigator.clipboard.writeText(text);
@@ -249,6 +310,17 @@
     document.querySelectorAll('[data-copy="c"]').forEach(btn => {
       btn.addEventListener('click', () => copyText(cUrl));
     });
+
+    fetch(`${base}/subscriptions.json`, { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then(renderSubscriptions)
+      .catch(() => {
+        document.getElementById('ispGrid').innerHTML =
+          '<p class="loading">订阅列表暂时无法加载，请稍后刷新。</p>';
+      });
   </script>
 </body>
 </html>
