@@ -1787,7 +1787,6 @@ ${txBulkRuleLines}
       'Access-Control-Allow-Origin': '*',
       'Profile-Title': profileName,
       'Profile-Update-Interval': '24',
-      'Content-Disposition': `attachment; filename="${profileName}.yaml"`,
       'Subscription-Userinfo': `upload=0; download=0; total=0; expire=${expire}`
     }
   });
