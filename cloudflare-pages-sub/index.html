@@ -3,312 +3,710 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>多出口节点订阅</title>
+  <meta name="color-scheme" content="dark" />
+  <title>多出口订阅入口</title>
   <style>
     :root {
-      --bg: #0b1020;
-      --card: #121931;
-      --muted: #9fb0d0;
-      --text: #eef4ff;
-      --line: #223055;
-      --accent: #6ea8fe;
-      --accent-2: #7ef0c2;
+      --bg: #080d19;
+      --surface: rgba(16, 24, 43, 0.92);
+      --surface-soft: rgba(23, 34, 59, 0.72);
+      --surface-hover: rgba(31, 46, 78, 0.86);
+      --line: rgba(139, 164, 207, 0.16);
+      --line-strong: rgba(125, 163, 255, 0.48);
+      --text: #f2f6ff;
+      --muted: #96a6c3;
+      --blue: #76a2ff;
+      --blue-strong: #4f7ff5;
+      --green: #6fe4b5;
+      --green-strong: #229b74;
+      --shadow: 0 22px 70px rgba(0, 0, 0, 0.3);
     }
+
     * { box-sizing: border-box; }
+
+    html { min-width: 320px; }
+
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: radial-gradient(circle at top, #162243 0%, var(--bg) 45%);
-      color: var(--text);
       min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(70, 112, 212, 0.22), transparent 34%),
+        radial-gradient(circle at 90% 85%, rgba(25, 142, 108, 0.12), transparent 32%),
+        var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
     }
-    .wrap {
-      max-width: 920px;
+
+    button, input { font: inherit; }
+
+    .page {
+      width: min(1120px, calc(100% - 40px));
       margin: 0 auto;
-      padding: 36px 20px 52px;
+      padding: 46px 0 34px;
     }
-    .hero {
-      text-align: center;
-      margin-bottom: 28px;
-    }
+
+    .hero { margin-bottom: 28px; }
+
     .badge {
-      display: inline-block;
-      padding: 6px 12px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--accent-2);
-      background: rgba(126, 240, 194, 0.08);
-      font-size: 13px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       margin-bottom: 14px;
+      padding: 7px 12px;
+      border: 1px solid rgba(111, 228, 181, 0.24);
+      border-radius: 999px;
+      color: var(--green);
+      background: rgba(27, 133, 99, 0.08);
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0.02em;
     }
+
+    .badge::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 12px currentColor;
+      content: "";
+    }
+
     h1 {
-      margin: 0 0 10px;
-      font-size: 34px;
-      line-height: 1.15;
+      margin: 0;
+      font-size: clamp(32px, 5vw, 48px);
+      line-height: 1.12;
+      letter-spacing: -0.035em;
     }
-    .sub {
-      margin: 0 auto;
-      max-width: 760px;
+
+    .subtitle {
+      max-width: 700px;
+      margin: 13px 0 0;
       color: var(--muted);
-      line-height: 1.7;
       font-size: 15px;
+      line-height: 1.75;
     }
-    .grid {
+
+    .workspace {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 18px;
-      margin-top: 30px;
-    }
-    .card {
-      background: rgba(18, 25, 49, 0.94);
+      grid-template-columns: 270px minmax(0, 1fr);
+      min-height: 540px;
+      overflow: hidden;
       border: 1px solid var(--line);
-      border-radius: 20px;
-      padding: 20px;
-      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
+      border-radius: 24px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
     }
-    .card h2 {
-      margin: 0 0 10px;
-      font-size: 22px;
-    }
-    .card-head {
+
+    .sidebar {
       display: flex;
-      align-items: baseline;
+      flex-direction: column;
+      padding: 22px 16px;
+      border-right: 1px solid var(--line);
+      background: rgba(9, 15, 28, 0.45);
+    }
+
+    .sidebar-head {
+      display: flex;
+      align-items: flex-end;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 12px;
+      padding: 0 8px 16px;
     }
-    .card-head h2 { margin: 0; }
-    .expiry { color: var(--muted); font-size: 13px; white-space: nowrap; }
-    .isp-card .mono { margin: 10px 0; }
-    .loading { color: var(--muted); text-align: center; grid-column: 1 / -1; }
-    .card p {
-      margin: 0 0 14px;
+
+    .sidebar-head h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .node-count {
       color: var(--muted);
-      line-height: 1.7;
-      font-size: 14px;
-      min-height: 92px;
+      font-size: 12px;
     }
+
+    .node-list {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .node-button {
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      padding: 13px 12px;
+      border: 1px solid transparent;
+      border-radius: 14px;
+      color: var(--text);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+    }
+
+    .node-button:hover {
+      transform: translateX(2px);
+      border-color: var(--line);
+      background: var(--surface-soft);
+    }
+
+    .node-button[aria-selected="true"] {
+      border-color: var(--line-strong);
+      background: linear-gradient(135deg, rgba(70, 111, 207, 0.3), rgba(37, 58, 100, 0.48));
+    }
+
+    .node-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 12px rgba(111, 228, 181, 0.66);
+    }
+
+    .node-copy { min-width: 0; }
+
+    .node-name {
+      display: block;
+      overflow: hidden;
+      font-size: 15px;
+      font-weight: 720;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .node-expiry {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .node-arrow {
+      color: var(--muted);
+      font-size: 18px;
+      transition: color 0.16s ease, transform 0.16s ease;
+    }
+
+    .node-button[aria-selected="true"] .node-arrow {
+      color: var(--blue);
+      transform: translateX(2px);
+    }
+
+    .sidebar-note {
+      margin: 18px 7px 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .loading, .load-error {
+      margin: 12px 8px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .details {
+      min-width: 0;
+      padding: 30px;
+    }
+
+    .details-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .details-head h2 {
+      margin: 0;
+      font-size: 29px;
+      letter-spacing: -0.02em;
+    }
+
+    .status-group {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .status, .expiry-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .status {
+      gap: 7px;
+      color: var(--green);
+      background: rgba(27, 133, 99, 0.1);
+      border: 1px solid rgba(111, 228, 181, 0.18);
+    }
+
+    .status::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+
+    .expiry-pill {
+      color: var(--muted);
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .subscription-list {
+      display: grid;
+      gap: 16px;
+      margin-top: 24px;
+    }
+
+    .subscription-card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface-soft);
+    }
+
+    .subscription-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 15px;
+    }
+
+    .client {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .client-icon {
+      display: inline-grid;
+      flex: 0 0 auto;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 11px;
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .client-icon.v2 {
+      color: #cfe0ff;
+      background: linear-gradient(135deg, #416fd2, #284d9f);
+    }
+
+    .client-icon.clash {
+      color: #d4fff0;
+      background: linear-gradient(135deg, #238d70, #17614e);
+    }
+
+    .client h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .client p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .url-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+    }
+
+    .url-box {
+      width: 100%;
+      min-width: 0;
+      height: 46px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      outline: none;
+      color: #dce7fb;
+      background: rgba(6, 11, 24, 0.7);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      text-overflow: ellipsis;
+    }
+
+    .url-box:focus { border-color: var(--line-strong); }
+
     .actions {
       display: flex;
-      gap: 10px;
+      gap: 9px;
       flex-wrap: wrap;
+      margin-top: 12px;
     }
-    .btn {
+
+    .button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 44px;
-      padding: 0 16px;
-      border-radius: 12px;
+      min-height: 42px;
+      padding: 0 15px;
       border: 1px solid var(--line);
+      border-radius: 11px;
       color: var(--text);
+      background: rgba(24, 36, 62, 0.92);
+      font-size: 13px;
+      font-weight: 680;
       text-decoration: none;
-      background: #182246;
       cursor: pointer;
-      transition: transform .15s ease, background .15s ease, border-color .15s ease;
-      font-size: 14px;
-      font-weight: 600;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
     }
-    .btn:hover { transform: translateY(-1px); border-color: var(--accent); }
-    .btn.primary { background: linear-gradient(135deg, #3a6df0, #578bff); border-color: #578bff; }
-    .btn.secondary { background: linear-gradient(135deg, #157a64, #1f9d80); border-color: #1f9d80; }
-    .btn.ghost { background: transparent; }
-    .block {
-      margin-top: 24px;
-      background: rgba(18, 25, 49, 0.94);
+
+    .button:hover {
+      transform: translateY(-1px);
+      border-color: var(--line-strong);
+      background: var(--surface-hover);
+    }
+
+    .button.primary {
+      border-color: rgba(118, 162, 255, 0.42);
+      background: linear-gradient(135deg, var(--blue-strong), #395fc4);
+    }
+
+    .button.green {
+      border-color: rgba(111, 228, 181, 0.28);
+      background: linear-gradient(135deg, var(--green-strong), #187158);
+    }
+
+    .copy-button { min-width: 82px; }
+
+    .notice {
+      display: flex;
+      gap: 11px;
+      margin-top: 20px;
+      padding: 14px 15px;
       border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 18px;
-    }
-    .block h3 {
-      margin: 0 0 12px;
-      font-size: 18px;
-    }
-    .mono {
-      display: block;
-      width: 100%;
-      padding: 12px 14px;
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      background: #0d1430;
-      color: #dce9ff;
-      overflow-wrap: anywhere;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 13px;
-      line-height: 1.6;
-      margin-bottom: 12px;
-    }
-    .tips {
+      border-radius: 14px;
       color: var(--muted);
-      line-height: 1.75;
-      font-size: 14px;
+      background: rgba(9, 15, 29, 0.48);
+      font-size: 12px;
+      line-height: 1.7;
     }
+
+    .notice strong { color: var(--text); }
+    .notice-icon { color: var(--blue); font-size: 16px; }
+
     .footer {
-      margin-top: 28px;
-      text-align: center;
+      margin-top: 22px;
       color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      z-index: 10;
+      padding: 11px 16px;
+      border: 1px solid rgba(111, 228, 181, 0.26);
+      border-radius: 12px;
+      color: var(--text);
+      background: rgba(14, 29, 28, 0.96);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
       font-size: 13px;
+      transform: translate(-50%, 20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .toast.show {
+      transform: translate(-50%, 0);
+      opacity: 1;
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        width: min(100% - 24px, 640px);
+        padding-top: 28px;
+      }
+
+      .hero { margin-bottom: 20px; }
+
+      .workspace {
+        grid-template-columns: 1fr;
+        min-height: 0;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .node-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .node-button:hover { transform: translateY(-1px); }
+      .sidebar-note { display: none; }
+      .details { padding: 22px 16px; }
+    }
+
+    @media (max-width: 520px) {
+      h1 { font-size: 31px; }
+      .subtitle { font-size: 14px; }
+      .details-head { flex-direction: column; }
+      .status-group { justify-content: flex-start; }
+      .node-list { grid-template-columns: 1fr; }
+      .url-row { grid-template-columns: 1fr; }
+      .copy-button { width: 100%; }
+      .actions .button { flex: 1 1 140px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition: none !important;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <div class="badge">T 中继 / 私有 ISP 清单</div>
+  <main class="page">
+    <header class="hero">
+      <div class="badge">T 中继 · 私有 ISP 出口</div>
       <h1>多出口订阅入口</h1>
-      <p class="sub">
-        <strong>v2rayN / v2rayNG 使用 <span id="v2UrlHead"></span></strong>，
-        <strong>Clash Verge / Mihomo / Clash 系客户端使用 <span id="cUrlHead"></span></strong>。
-        订阅中包含 <strong>T 中继入口</strong> 与 <strong>私有 ISP 最终出口</strong> 组合节点。
-      </p>
-    </div>
+      <p class="subtitle">从左侧选择一个出口节点，右侧会显示该节点专属的 v2ray 与 Clash 订阅地址。每个订阅只包含对应出口的 Trojan 和 Hysteria2 节点。</p>
+    </header>
 
-    <div class="grid">
-      <div class="card">
-        <h2>v2rayN / v2rayNG</h2>
-        <p>
-          使用专用订阅地址 <strong><span class="v2UrlInline"></span></strong>。
-          独立订阅格式为 <code class="v2UrlInline"></code><code>?isp=&lt;编号&gt;</code>，只显示 `T-&lt;编号&gt;-TJ/HY2` 两个入口节点。
-          Android 端可尝试直接唤起 v2rayNG；Windows 端更稳的方式仍然是复制订阅链接后，在 v2rayN 中添加订阅。
-        </p>
-        <div class="actions">
-          <a id="v2rayngLink" class="btn primary" href="#">在 v2rayNG 中打开</a>
-          <button class="btn ghost" data-copy="v2">复制 v2 订阅</button>
+    <section class="workspace" aria-label="订阅选择器">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <h2>选择节点</h2>
+          <span id="nodeCount" class="node-count">加载中</span>
         </div>
-      </div>
-
-      <div class="card">
-        <h2>Clash Verge / Mihomo</h2>
-        <p>
-          使用专用订阅地址 <strong><span class="cUrlInline"></span></strong>。
-          默认可使用 `🛡️ 自动容灾` 或 `♻️ 自动选择` 分组。
-          独立订阅格式为 <code class="cUrlInline"></code><code>?isp=&lt;编号&gt;</code>；AI 和普通流量固定使用该编号对应的 ISP，不会跨 ISP 或回落到 DIRECT。
-        </p>
-        <div class="actions">
-          <a id="clashLink" class="btn secondary" href="#">打开 Clash 导入</a>
-          <button class="btn ghost" data-copy="c">复制 Clash 订阅</button>
+        <div id="nodeList" class="node-list" role="listbox" aria-label="可用出口节点">
+          <p class="loading">正在加载节点列表…</p>
         </div>
-      </div>
-    </div>
+        <p class="sidebar-note">节点到期后会自动从列表移除，对应订阅接口返回 HTTP 410。</p>
+      </aside>
 
-    <div class="block">
-      <h3>我的独立订阅</h3>
-      <div id="ispGrid" class="grid">
-        <p class="loading">正在加载订阅列表…</p>
-      </div>
-    </div>
+      <section class="details" aria-live="polite">
+        <div class="details-head">
+          <div>
+            <p class="eyebrow">当前出口</p>
+            <h2 id="selectedName">请选择节点</h2>
+          </div>
+          <div class="status-group">
+            <span class="status">可用</span>
+            <span id="selectedExpiry" class="expiry-pill">等待选择</span>
+          </div>
+        </div>
 
-    <div class="block">
-      <h3>订阅地址</h3>
-      <div class="mono">v2rayN / v2rayNG：<span id="v2Url"></span></div>
-      <div class="mono">Clash / Mihomo：<span id="cUrl"></span></div>
-      <div class="actions">
-        <button class="btn primary" data-copy="v2">复制 v2 订阅</button>
-        <button class="btn secondary" data-copy="c">复制 Clash 订阅</button>
-      </div>
-    </div>
+        <div class="subscription-list">
+          <article class="subscription-card">
+            <div class="subscription-head">
+              <div class="client">
+                <span class="client-icon v2">V2</span>
+                <div>
+                  <h3>v2rayN / v2rayNG</h3>
+                  <p>Base64 通用订阅</p>
+                </div>
+              </div>
+            </div>
+            <div class="url-row">
+              <input id="v2Url" class="url-box" type="text" readonly aria-label="v2ray 订阅地址" />
+              <button class="button copy-button" type="button" data-copy-target="v2Url">复制地址</button>
+            </div>
+            <div class="actions">
+              <a id="v2Import" class="button primary" href="#">在 v2rayNG 中导入</a>
+              <a id="v2Open" class="button" href="#" target="_blank" rel="noopener">打开订阅</a>
+            </div>
+          </article>
 
-    <div class="block">
-      <h3>节点说明</h3>
-      <div class="tips">
-        <p><strong>T 中继：</strong> T 服务器只作为接入入口，不作为最终上网出口。</p>
-        <p><strong>ISP 清单：</strong> 每个未到期条目都会生成一组独立订阅；到期后接口返回 HTTP 410。</p>
-        <p><strong>AI 服务：</strong> OpenAI、Claude、Gemini 默认走 ISP-only 专用策略组，避免误选 DIRECT 或使用 T 公网 IP 作为最终出口。</p>
-      </div>
-    </div>
+          <article class="subscription-card">
+            <div class="subscription-head">
+              <div class="client">
+                <span class="client-icon clash">C</span>
+                <div>
+                  <h3>Clash Verge / Mihomo</h3>
+                  <p>按编号命名的 YAML 订阅</p>
+                </div>
+              </div>
+            </div>
+            <div class="url-row">
+              <input id="clashUrl" class="url-box" type="text" readonly aria-label="Clash 订阅地址" />
+              <button class="button copy-button" type="button" data-copy-target="clashUrl">复制地址</button>
+            </div>
+            <div class="actions">
+              <a id="clashImport" class="button green" href="#">导入 Clash</a>
+              <a id="clashOpen" class="button" href="#" target="_blank" rel="noopener">打开订阅</a>
+            </div>
+          </article>
+        </div>
 
-    <div class="block">
-      <h3>导入说明</h3>
-      <div class="tips">
-        <p><strong>v2rayN：</strong> 使用 <code class="v2UrlInline"></code><code>?isp=&lt;编号&gt;</code> 添加单 ISP 订阅。</p>
-        <p><strong>v2rayNG：</strong> 可直接点击上方按钮尝试唤起；若没有自动导入，复制 <code class="v2UrlInline"></code> 到客户端中导入。</p>
-        <p><strong>Clash Verge / Mihomo：</strong> 使用 <code class="cUrlInline"></code><code>?isp=&lt;编号&gt;</code> 添加单 ISP 订阅；不带参数的链接仍包含全部未到期 ISP。</p>
-      </div>
-    </div>
+        <div class="notice">
+          <span class="notice-icon">ⓘ</span>
+          <span><strong>固定出口：</strong>AI 与普通流量会固定使用当前选择的 ISP，不会跨 ISP，也不会回落到 T 服务器公网直出。</span>
+        </div>
+      </section>
+    </section>
 
-    <div class="footer">Powered by Cloudflare Pages · T 中继 / 私有 ISP 清单</div>
-  </div>
+    <footer class="footer">Powered by Cloudflare Pages · T 中继 / 私有 ISP 清单</footer>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite">订阅地址已复制</div>
 
   <script>
     const base = `${window.location.protocol}//${window.location.host}`;
-    const v2Url = `${base}/v2`;
-    const cUrl = `${base}/c`;
+    const elements = {
+      list: document.getElementById('nodeList'),
+      count: document.getElementById('nodeCount'),
+      name: document.getElementById('selectedName'),
+      expiry: document.getElementById('selectedExpiry'),
+      v2Url: document.getElementById('v2Url'),
+      clashUrl: document.getElementById('clashUrl'),
+      v2Import: document.getElementById('v2Import'),
+      clashImport: document.getElementById('clashImport'),
+      v2Open: document.getElementById('v2Open'),
+      clashOpen: document.getElementById('clashOpen'),
+      toast: document.getElementById('toast')
+    };
 
-    document.getElementById('v2UrlHead').textContent = v2Url;
-    document.getElementById('cUrlHead').textContent = cUrl;
-    document.getElementById('v2Url').textContent = v2Url;
-    document.getElementById('cUrl').textContent = cUrl;
-
-    document.querySelectorAll('.v2UrlInline').forEach(el => { el.textContent = v2Url; });
-    document.querySelectorAll('.cUrlInline').forEach(el => { el.textContent = cUrl; });
-
-    document.getElementById('v2rayngLink').href = `v2rayng://install-config/?url=${encodeURIComponent(v2Url)}`;
-    document.getElementById('clashLink').href = `clash://install-config?url=${encodeURIComponent(cUrl)}`;
+    let subscriptions = [];
+    let toastTimer;
 
     function absoluteUrl(path) {
       return new URL(path, base).toString();
     }
 
-    function renderSubscriptions(entries) {
-      const grid = document.getElementById('ispGrid');
-      if (!Array.isArray(entries) || entries.length === 0) {
-        grid.innerHTML = '<p class="loading">当前没有可用的独立订阅。</p>';
-        return;
+    function selectSubscription(id, updateHistory = true) {
+      const entry = subscriptions.find((item) => item.id === id);
+      if (!entry) return;
+
+      const v2Url = absoluteUrl(entry.v2);
+      const clashUrl = absoluteUrl(entry.clash);
+
+      elements.name.textContent = entry.id;
+      elements.expiry.textContent = `到期 ${entry.expires}`;
+      elements.v2Url.value = v2Url;
+      elements.clashUrl.value = clashUrl;
+      elements.v2Import.href = `v2rayng://install-config/?url=${encodeURIComponent(v2Url)}`;
+      elements.clashImport.href = `clash://install-config?url=${encodeURIComponent(clashUrl)}`;
+      elements.v2Open.href = v2Url;
+      elements.clashOpen.href = clashUrl;
+
+      elements.list.querySelectorAll('.node-button').forEach((button) => {
+        button.setAttribute('aria-selected', String(button.dataset.id === id));
+      });
+
+      if (updateHistory) {
+        const pageUrl = new URL(window.location.href);
+        pageUrl.searchParams.set('isp', id);
+        window.history.replaceState(null, '', pageUrl);
       }
-
-      grid.innerHTML = '';
-      entries.forEach((entry) => {
-        const v2 = absoluteUrl(entry.v2);
-        const clash = absoluteUrl(entry.clash);
-        const card = document.createElement('article');
-        card.className = 'card isp-card';
-        card.innerHTML = `
-          <div class="card-head">
-            <h2>${escapeHtml(entry.id)}</h2>
-            <span class="expiry">到期 ${escapeHtml(entry.expires)}</span>
-          </div>
-          <div class="mono">v2：${escapeHtml(v2)}</div>
-          <div class="mono">Clash：${escapeHtml(clash)}</div>
-          <div class="actions">
-            <button class="btn primary" data-url="${escapeHtml(v2)}">复制 v2</button>
-            <button class="btn secondary" data-url="${escapeHtml(clash)}">复制 Clash</button>
-            <a class="btn ghost" href="clash://install-config?url=${encodeURIComponent(clash)}">导入 Clash</a>
-          </div>`;
-        grid.appendChild(card);
-      });
-
-      grid.querySelectorAll('[data-url]').forEach((button) => {
-        button.addEventListener('click', () => copyText(button.dataset.url));
-      });
     }
 
-    function escapeHtml(value) {
-      return String(value).replace(/[&<>'"]/g, (character) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-      })[character]);
+    function createNodeButton(entry) {
+      const button = document.createElement('button');
+      button.className = 'node-button';
+      button.type = 'button';
+      button.role = 'option';
+      button.dataset.id = entry.id;
+      button.setAttribute('aria-selected', 'false');
+
+      const dot = document.createElement('span');
+      dot.className = 'node-dot';
+      dot.setAttribute('aria-hidden', 'true');
+
+      const copy = document.createElement('span');
+      copy.className = 'node-copy';
+
+      const name = document.createElement('span');
+      name.className = 'node-name';
+      name.textContent = entry.id;
+
+      const expiry = document.createElement('span');
+      expiry.className = 'node-expiry';
+      expiry.textContent = `到期 ${entry.expires}`;
+
+      const arrow = document.createElement('span');
+      arrow.className = 'node-arrow';
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.textContent = '›';
+
+      copy.append(name, expiry);
+      button.append(dot, copy, arrow);
+      button.addEventListener('click', () => selectSubscription(entry.id));
+      return button;
+    }
+
+    function renderSubscriptions(entries) {
+      if (!Array.isArray(entries) || entries.length === 0) {
+        throw new Error('No active subscriptions');
+      }
+
+      subscriptions = entries;
+      elements.list.replaceChildren(...entries.map(createNodeButton));
+      elements.count.textContent = `${entries.length} 个可用`;
+
+      const requestedId = new URL(window.location.href).searchParams.get('isp');
+      const initialEntry = entries.find((entry) => entry.id === requestedId) || entries[0];
+      selectSubscription(initialEntry.id, requestedId !== initialEntry.id);
+    }
+
+    function showToast(message) {
+      elements.toast.textContent = message;
+      elements.toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => elements.toast.classList.remove('show'), 1800);
     }
 
     async function copyText(text) {
       try {
         await navigator.clipboard.writeText(text);
-        alert('已复制订阅链接');
       } catch {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
         document.execCommand('copy');
-        document.body.removeChild(ta);
-        alert('已复制订阅链接');
+        textarea.remove();
       }
+      showToast('订阅地址已复制');
     }
 
-    document.querySelectorAll('[data-copy="v2"]').forEach(btn => {
-      btn.addEventListener('click', () => copyText(v2Url));
-    });
-
-    document.querySelectorAll('[data-copy="c"]').forEach(btn => {
-      btn.addEventListener('click', () => copyText(cUrl));
+    document.querySelectorAll('[data-copy-target]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const input = document.getElementById(button.dataset.copyTarget);
+        copyText(input.value);
+      });
     });
 
     fetch(`${base}/subscriptions.json`, { cache: 'no-store' })
@@ -318,8 +716,11 @@
       })
       .then(renderSubscriptions)
       .catch(() => {
-        document.getElementById('ispGrid').innerHTML =
-          '<p class="loading">订阅列表暂时无法加载，请稍后刷新。</p>';
+        elements.count.textContent = '加载失败';
+        const message = document.createElement('p');
+        message.className = 'load-error';
+        message.textContent = '节点列表暂时无法加载，请刷新页面重试。';
+        elements.list.replaceChildren(message);
       });
   </script>
 </body>
