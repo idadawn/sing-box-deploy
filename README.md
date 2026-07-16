@@ -146,6 +146,8 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | `AI_ISP_DOMAINS` | 必须走当前 ISP 的 AI 域名，留空使用内置清单 |
 | `DIRECT_BULK_ENABLED` | 是否允许指定大流量域名从 T 公网直出 |
 | `DIRECT_BULK_DOMAINS` | 自定义大流量直出域名 |
+| `DIRECT_BULK_APPS` | 可选大流量应用，当前支持 `telegram` |
+| `DIRECT_BULK_IP_CIDRS` | 自定义大流量直出目标 IP/CIDR |
 
 ### 订阅与规则
 
@@ -178,6 +180,7 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | AI 域名 | 当前入口绑定的 ISP SOCKS5 |
 | 普通互联网流量 | 当前入口绑定的 ISP SOCKS5 |
 | 指定大流量域名 | `DIRECT_BULK_ENABLED=true` 时使用 T 公网直出 |
+| `DIRECT_BULK_APPS=telegram` | Telegram 域名及内置 Telegram CIDR 使用 T 公网直出 |
 | 未匹配或异常流量 | `block` |
 
 关键原则：
@@ -185,7 +188,9 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 - AI 规则优先于大流量直出规则。
 - 不会从当前 ISP 静默切换到其他 ISP。
 - 不会把 T 公网 IP 当作通用兜底出口。
-- 只有显式列入大流量规则的域名可以使用 `direct-out`。
+- 只有显式列入大流量规则的域名、应用或 IP/CIDR 可以使用 `direct-out`。
+- Telegram 应用开关会同时添加域名与 IP/CIDR 规则，原生 MTProto 流量不依赖域名嗅探。
+- Clash 客户端使用每日同步的 `telegramcidr` 规则；服务端使用脚本内置 CIDR，并可通过 `DIRECT_BULK_IP_CIDRS` 追加范围。
 - 对出口一致性要求最高时，应保持 `DIRECT_BULK_ENABLED=false`。
 
 ## 订阅
