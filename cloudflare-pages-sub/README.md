@@ -4,7 +4,7 @@
 
 - `Clash` 与 `v2rayN / v2rayNG` 订阅由私有 ISP 清单动态生成
 - `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
-- 主页从部署时生成的 `subscriptions.json` 读取独立订阅和到期日；`homepageHiddenIds` 可隐藏私用编号（只隐藏界面，不构成访问控制）
+- 主页从部署时生成的 `subscriptions.json` 读取独立订阅和到期日；`homepageHiddenIds` 可隐藏私用编号，追加 `?all=1` 可显示全部编号（都不构成访问控制）
 - 单 ISP Clash 订阅同时返回 `Profile-Title: <编号>` 与无引号、无扩展名的 `filename=<编号>`，兼容采用不同响应头命名的客户端
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`

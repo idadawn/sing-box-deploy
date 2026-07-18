@@ -584,6 +584,7 @@
   <script>
     const base = `${window.location.protocol}//${window.location.host}`;
     const homepageHiddenIds = new Set(['own']);
+    const showAllSubscriptions = new URL(window.location.href).searchParams.get('all') === '1';
     const elements = {
       list: document.getElementById('nodeList'),
       count: document.getElementById('nodeCount'),
@@ -668,7 +669,9 @@
 
     function renderSubscriptions(entries) {
       const visibleEntries = Array.isArray(entries)
-        ? entries.filter((entry) => !homepageHiddenIds.has(entry.id))
+        ? (showAllSubscriptions
+          ? entries
+          : entries.filter((entry) => !homepageHiddenIds.has(entry.id)))
         : [];
 
       if (visibleEntries.length === 0) {
