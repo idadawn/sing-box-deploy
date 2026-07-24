@@ -5,9 +5,11 @@
 - `Clash` 与 `v2rayN / v2rayNG` 订阅由私有 ISP 清单动态生成
 - `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
 - 主页从部署时生成的 `subscriptions.json` 读取独立订阅和到期日；`homepageHiddenIds` 可隐藏私用编号，追加 `?all=1` 可显示全部编号（都不构成访问控制）
-- 单 ISP Clash 订阅同时返回 `Profile-Title: <编号>` 与无引号、无扩展名的 `filename=<编号>`，兼容采用不同响应头命名的客户端
+- 单 ISP 订阅同时返回 `Profile-Title: <编号>`、`Profile-Update-Interval: 24` 与无引号、无扩展名的 `filename=<编号>`/`filename*`，兼容采用不同响应头命名的客户端
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
+- Hysteria2 默认不声明固定上下行带宽，由客户端和服务端使用自适应拥塞控制
+- 自动策略组使用 `url-test` 延迟选择；手动节点选择和固定 ISP 语义保持不变
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
 - 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 TX 大流量`，服务端显式使用 T 公网出口
 - 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新

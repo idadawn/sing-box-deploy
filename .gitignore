@@ -22,6 +22,9 @@ cloudflare-pages-sub/nodes.yaml
 
 # ── 备份目录 ─────────────────────────────────────────────
 backup-*/
+migration-*.tar.gz.enc
+.env.bak.*
+isp-list.tsv.bak.*
 
 # ── Wrangler 缓存 ────────────────────────────────────────
 .wrangler/

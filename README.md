@@ -13,8 +13,10 @@
 - 默认失败关闭：未命中明确规则的服务端流量由 `route.final=block` 拒绝。
 - ISP 地址、账号和密码只保存在服务器本地私有 TSV 文件中。
 - 自动生成 v2rayN/v2rayNG 与 Clash/Mihomo 订阅，并发布到 Cloudflare Pages。
+- 默认使用 Hysteria2 自适应拥塞控制，并优化 Linux UDP 缓冲、TCP BBR/fq 与 TCP Fast Open。
 - 自动同步并校验 Clash 规则快照，失败时继续使用上一版。
 - 支持出口健康检查、systemd 定时任务和可选 SMTP 告警。
+- 支持把敏感配置导出为加密迁移包，在新服务器安全恢复。
 
 ## 架构
 
@@ -93,8 +95,9 @@ sudo ./install.sh
 4. 校验配置并部署 systemd 服务。
 5. 按配置更新 UFW。
 6. 生成订阅、首页、Clash 扩展脚本和规则镜像。
-7. 发布 Cloudflare Pages。
-8. 安装规则同步与可选出口监控定时器。
+7. 优化 Linux UDP/TCP 网络参数。
+8. 发布 Cloudflare Pages。
+9. 安装规则同步与可选出口监控定时器。
 
 ## ISP 清单
 
@@ -148,6 +151,20 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | `DIRECT_BULK_DOMAINS` | 自定义大流量直出域名 |
 | `DIRECT_BULK_APPS` | 可选大流量应用，当前支持 `telegram` |
 | `DIRECT_BULK_IP_CIDRS` | 自定义大流量直出目标 IP/CIDR |
+
+### 性能
+
+| 变量 | 用途 |
+| --- | --- |
+| `HYSTERIA_CC_MODE` | `bbr` 为自适应模式（默认）；`brutal` 为固定带宽模式 |
+| `HYSTERIA_UP_MBPS` | 仅 `brutal` 模式使用的客户端上行带宽 |
+| `HYSTERIA_DOWN_MBPS` | 仅 `brutal` 模式使用的客户端下行带宽 |
+| `ENABLE_NETWORK_TUNING` | 是否写入并应用本项目的 Linux 网络优化 |
+| `ENABLE_BBR` | 内核支持时是否启用 TCP BBR 与 `fq` |
+| `ENABLE_TCP_FAST_OPEN` | 是否为 Trojan 入站和 ISP SOCKS5 出站启用 TCP Fast Open |
+| `UDP_BUFFER_BYTES` | Linux UDP 收发缓冲上限，默认 16 MiB |
+
+这里有两层不同的 BBR：`HYSTERIA_CC_MODE=bbr` 控制 Hysteria2/QUIC，不固定声明客户端带宽；`ENABLE_BBR=true` 控制 Linux TCP，主要帮助 Trojan 与到 ISP 的 TCP 链路。默认值适合个人线路和后续换机。只有准确知道稳定可用带宽并愿意调参时，才建议使用 `brutal`。
 
 ### 订阅与规则
 
@@ -207,10 +224,11 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 
 ```text
 Profile-Title: <编号>
+Profile-Update-Interval: 24
 Content-Disposition: attachment; filename=<编号>
 ```
 
-`filename` 不添加引号和 `.yaml` 后缀，以兼容采用不同响应头解析方式的客户端。
+响应同时提供 RFC 5987 的 `filename*`；文件名不添加引号和 `.yaml` 后缀，以兼容采用不同响应头解析方式的客户端。
 
 ### 首页可见性
 
@@ -284,8 +302,42 @@ journalctl -u clash-rules-sync.service -n 100 --no-pager
 sudo ./install.sh
 sudo ./install.sh --force-reinstall
 sudo ./install.sh --skip-firewall
+sudo ./install.sh --skip-network-tuning
 sudo ./install.sh --no-start
+./install.sh --validate-only
 ```
+
+## 更换接入服务器
+
+迁移包包含 `.env` 和私有 ISP 清单，使用 AES-256-CBC、PBKDF2 和 SHA-256 完整性信息保护。证书缓存、运行配置和系统状态不会迁移，新服务器会重新生成。
+
+在旧服务器导出：
+
+```bash
+cd ~/app/sing-box-deploy
+./migrate.sh export
+```
+
+把生成的 `migration-*.tar.gz.enc` 复制到新服务器，并将密码通过另一条安全通道保存。在新服务器：
+
+```bash
+git clone https://github.com/idadawn/sing-box-deploy.git
+cd sing-box-deploy
+./migrate.sh import /path/to/migration-*.tar.gz.enc
+sudo ./install.sh
+```
+
+建议按以下顺序切换：
+
+1. 提前降低 Trojan 与 Hysteria2 域名的 DNS TTL。
+2. 在新服务器安全组放行全部实际使用的 Trojan/TCP、Hysteria2/UDP 和 SSH 端口。
+3. 导入迁移包并完成安装；DNS-01 允许新旧服务器在切换前并行存在。
+4. 在新服务器检查服务、监听端口、ISP 出口和订阅内容。
+5. 将两个入口域名的 A 记录切到新服务器公网 IP。
+6. 用真实客户端验证 Trojan、Hysteria2 和各 ISP 出口。
+7. 旧服务器至少保留一个 DNS TTL 周期，确认稳定后再下线。
+
+迁移过程中保持域名、入口密码、ISP 清单行顺序和基础端口不变，客户端订阅 URL 无需修改。迁移包本身仍应按密钥材料管理；不要提交到 Git 或放在公开网盘。
 
 ## 安全清单
 
@@ -337,6 +389,7 @@ journalctl -u clash-rules-sync.service -n 100 --no-pager
 sing-box-deploy/
 ├── install.sh
 ├── manage.sh
+├── migrate.sh
 ├── sync-clash-rules.sh
 ├── setup-ssh.sh
 ├── .env.example

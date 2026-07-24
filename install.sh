@@ -22,10 +22,13 @@ CONFIG_PATH="${CONFIG_DIR}/config.json"
 CERT_DIR="/var/lib/sing-box/certmagic"
 SOURCES_FILE="/etc/apt/sources.list.d/sagernet.sources"
 KEYRING_FILE="/etc/apt/keyrings/sagernet.asc"
+NETWORK_TUNING_FILE="/etc/sysctl.d/99-sing-box-performance.conf"
 
 FORCE_REINSTALL=0
 SKIP_FIREWALL=0
+SKIP_NETWORK_TUNING=0
 NO_START=0
+VALIDATE_ONLY=0
 
 TMP_CONFIG=""
 BACKUP_CONFIG=""
@@ -108,7 +111,10 @@ usage() {
   --env <path>         指定 .env 文件路径
   --force-reinstall    强制重装 sing-box
   --skip-firewall      跳过 UFW 配置
+  --skip-network-tuning
+                      跳过 Linux 网络参数优化
   --no-start           仅部署配置，不启动/重启 sing-box
+  --validate-only      只生成并校验临时配置，不修改系统
   -h, --help           显示帮助
 
 示例:
@@ -137,8 +143,16 @@ parse_args() {
         SKIP_FIREWALL=1
         shift
         ;;
+      --skip-network-tuning)
+        SKIP_NETWORK_TUNING=1
+        shift
+        ;;
       --no-start)
         NO_START=1
+        shift
+        ;;
+      --validate-only)
+        VALIDATE_ONLY=1
         shift
         ;;
       -h|--help)
@@ -169,6 +183,18 @@ is_true() {
   case "${v,,}" in
     1|true|yes|y|on) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+validate_bool() {
+  local name="$1"
+  local value="${2:-}"
+  case "${value,,}" in
+    1|0|true|false|yes|no|y|n|on|off) ;;
+    *)
+      log_error "${name} 必须是 true/false、yes/no、on/off 或 1/0"
+      exit 1
+      ;;
   esac
 }
 
@@ -294,6 +320,7 @@ load_env() {
   HYSTERIA_PORT="${HYSTERIA_PORT:-8443}"
   HYSTERIA_UP_MBPS="${HYSTERIA_UP_MBPS:-50}"
   HYSTERIA_DOWN_MBPS="${HYSTERIA_DOWN_MBPS:-100}"
+  HYSTERIA_CC_MODE="${HYSTERIA_CC_MODE:-bbr}"
   ISP_PORT_STEP="${ISP_PORT_STEP:-10000}"
   AI_ISP_DOMAINS="${AI_ISP_DOMAINS:-${DEFAULT_AI_ISP_DOMAINS}}"
   DIRECT_BULK_ENABLED="${DIRECT_BULK_ENABLED:-false}"
@@ -317,6 +344,10 @@ load_env() {
   LOG_LEVEL="${LOG_LEVEL:-info}"
   SSH_PORT="${SSH_PORT:-22}"
   ENABLE_UFW="${ENABLE_UFW:-true}"
+  ENABLE_NETWORK_TUNING="${ENABLE_NETWORK_TUNING:-true}"
+  ENABLE_BBR="${ENABLE_BBR:-true}"
+  ENABLE_TCP_FAST_OPEN="${ENABLE_TCP_FAST_OPEN:-true}"
+  UDP_BUFFER_BYTES="${UDP_BUFFER_BYTES:-16777216}"
 
   log_success ".env 已加载"
 }
@@ -543,6 +574,27 @@ validate_config() {
 
   validate_positive_int "HYSTERIA_UP_MBPS" "${HYSTERIA_UP_MBPS}"
   validate_positive_int "HYSTERIA_DOWN_MBPS" "${HYSTERIA_DOWN_MBPS}"
+  case "${HYSTERIA_CC_MODE,,}" in
+    bbr) ;;
+    brutal)
+      (( HYSTERIA_UP_MBPS > 0 && HYSTERIA_DOWN_MBPS > 0 )) || {
+        log_error "HYSTERIA_CC_MODE=brutal 时 HYSTERIA_UP_MBPS 和 HYSTERIA_DOWN_MBPS 必须大于 0"
+        exit 1
+      }
+      ;;
+    *)
+      log_error "HYSTERIA_CC_MODE 非法，允许值: bbr|brutal"
+      exit 1
+      ;;
+  esac
+  validate_positive_int "UDP_BUFFER_BYTES" "${UDP_BUFFER_BYTES}"
+  (( UDP_BUFFER_BYTES >= 1048576 )) || {
+    log_error "UDP_BUFFER_BYTES 不应低于 1048576"
+    exit 1
+  }
+  validate_bool "ENABLE_NETWORK_TUNING" "${ENABLE_NETWORK_TUNING}"
+  validate_bool "ENABLE_BBR" "${ENABLE_BBR}"
+  validate_bool "ENABLE_TCP_FAST_OPEN" "${ENABLE_TCP_FAST_OPEN}"
   [[ "${LOG_LEVEL}" =~ ^(trace|debug|info|warn|error|fatal|panic)$ ]] || {
     log_error "LOG_LEVEL 非法，允许值: trace|debug|info|warn|error|fatal|panic"
     exit 1
@@ -620,8 +672,16 @@ generate_config() {
   build_isp_json
 
   local direct_bulk_enabled_json=false
+  local hy2_use_bbr_json=false
+  local tcp_fast_open_json=false
   if is_true "${DIRECT_BULK_ENABLED}"; then
     direct_bulk_enabled_json=true
+  fi
+  if [[ "${HYSTERIA_CC_MODE,,}" == "bbr" ]]; then
+    hy2_use_bbr_json=true
+  fi
+  if is_true "${ENABLE_TCP_FAST_OPEN}"; then
+    tcp_fast_open_json=true
   fi
 
   jq -n \
@@ -640,6 +700,8 @@ generate_config() {
     --arg direct_bulk_ip_cidrs "${DIRECT_BULK_IP_CIDRS}" \
     --argjson isps "${ISP_LIST_JSON}" \
     --argjson direct_bulk_enabled "${direct_bulk_enabled_json}" \
+    --argjson hy2_use_bbr "${hy2_use_bbr_json}" \
+    --argjson tcp_fast_open "${tcp_fast_open_json}" \
     --argjson hy2_up_mbps "${HYSTERIA_UP_MBPS}" \
     --argjson hy2_down_mbps "${HYSTERIA_DOWN_MBPS}" \
     '
@@ -708,6 +770,7 @@ generate_config() {
         tag: $tag,
         listen: "::",
         listen_port: $port,
+        tcp_fast_open: $tcp_fast_open,
         users: [
           {
             name: $user_name,
@@ -731,13 +794,12 @@ generate_config() {
       };
 
     def hy2_inbound($tag; $port; $user_name):
-      {
+      ({
         type: "hysteria2",
         tag: $tag,
         listen: "::",
         listen_port: $port,
-        up_mbps: $hy2_up_mbps,
-        down_mbps: $hy2_down_mbps,
+        ignore_client_bandwidth: $hy2_use_bbr,
         obfs: {
           type: "salamander",
           password: $hy2_obfs_password
@@ -762,7 +824,14 @@ generate_config() {
             dns01_challenge: cf_dns01
           }
         }
-      };
+      } + if $hy2_use_bbr then
+        {}
+      else
+        {
+          up_mbps: $hy2_up_mbps,
+          down_mbps: $hy2_down_mbps
+        }
+      end);
 
     {
       log: {
@@ -790,6 +859,7 @@ generate_config() {
           server: .host,
           server_port: .socks_port,
           version: "5",
+          tcp_fast_open: $tcp_fast_open,
           username: .username,
           password: .password
         }] + [
@@ -844,6 +914,60 @@ deploy_config() {
   log_info "写入正式配置..."
   install -m 600 "${TMP_CONFIG}" "${CONFIG_PATH}"
   log_success "配置已写入: ${CONFIG_PATH}"
+}
+
+apply_network_tuning() {
+  if (( SKIP_NETWORK_TUNING == 1 )); then
+    log_warn "按参数要求跳过 Linux 网络参数优化"
+    return
+  fi
+  if ! is_true "${ENABLE_NETWORK_TUNING}"; then
+    log_warn "ENABLE_NETWORK_TUNING=${ENABLE_NETWORK_TUNING}，跳过 Linux 网络参数优化"
+    return
+  fi
+
+  log_info "配置 Linux 网络参数（UDP 缓冲、TCP Fast Open、可用时启用 BBR/fq）..."
+
+  local tuning_tmp
+  local bbr_available=0
+  tuning_tmp="$(mktemp /tmp/sing-box-sysctl.XXXXXX.conf)"
+
+  if is_true "${ENABLE_BBR}"; then
+    modprobe tcp_bbr >/dev/null 2>&1 || true
+    if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+      bbr_available=1
+      modprobe sch_fq >/dev/null 2>&1 || true
+    else
+      log_warn "当前内核未提供 BBR，继续应用 UDP 缓冲和 TCP Fast Open 优化"
+    fi
+  fi
+
+  {
+    cat <<EOF
+# Managed by sing-box-deploy. Re-run install.sh after changing .env.
+net.core.rmem_max=${UDP_BUFFER_BYTES}
+net.core.wmem_max=${UDP_BUFFER_BYTES}
+EOF
+    if is_true "${ENABLE_TCP_FAST_OPEN}"; then
+      echo "net.ipv4.tcp_fastopen=3"
+    fi
+    if (( bbr_available == 1 )); then
+      echo "net.core.default_qdisc=fq"
+      echo "net.ipv4.tcp_congestion_control=bbr"
+    fi
+  } > "${tuning_tmp}"
+
+  if [[ -f "${NETWORK_TUNING_FILE}" ]] && ! cmp -s "${tuning_tmp}" "${NETWORK_TUNING_FILE}"; then
+    cp -a "${NETWORK_TUNING_FILE}" "${NETWORK_TUNING_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
+  fi
+  install -m 644 "${tuning_tmp}" "${NETWORK_TUNING_FILE}"
+  rm -f "${tuning_tmp}"
+
+  if sysctl -p "${NETWORK_TUNING_FILE}" >/dev/null; then
+    log_success "网络参数优化已生效: rmem/wmem=${UDP_BUFFER_BYTES}, TCP CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
+  else
+    log_warn "网络参数文件已写入，但部分参数未能立即生效；重启后请复查 ${NETWORK_TUNING_FILE}"
+  fi
 }
 
 setup_firewall() {
@@ -1180,6 +1304,10 @@ EOF
 AI 域名: 强制使用当前订阅对应 ISP
 视频/软件下载直出: ${DIRECT_BULK_ENABLED}
 大流量应用: ${DIRECT_BULK_APPS:-无}
+Hysteria2 拥塞控制: ${HYSTERIA_CC_MODE}
+Linux 网络优化: ${ENABLE_NETWORK_TUNING}
+UDP 收发缓冲上限: ${UDP_BUFFER_BYTES}
+TCP Fast Open: ${ENABLE_TCP_FAST_OPEN}
 
 [文件]
 配置文件: ${CONFIG_PATH}
@@ -1210,6 +1338,8 @@ show_final_info() {
   echo "AI 域名策略: 当前订阅对应 ISP"
   echo "视频/下载直出: ${DIRECT_BULK_ENABLED}"
   echo "大流量应用: ${DIRECT_BULK_APPS:-无}"
+  echo "Hysteria2 拥塞控制: ${HYSTERIA_CC_MODE}"
+  echo "Linux 网络优化: ${ENABLE_NETWORK_TUNING}"
   echo "独立订阅数量: ${ISP_COUNT}"
   echo "配置文件   : ${CONFIG_PATH}"
   [[ -n "${BACKUP_CONFIG}" ]] && echo "配置备份   : ${BACKUP_CONFIG}"
@@ -1460,6 +1590,13 @@ export async function onRequest(context) {
   const expire = entries.length > 0
     ? Math.floor(new Date(`${entries.map((entry) => entry.expires).sort()[0]}T23:59:59Z`).getTime() / 1000)
     : 0;
+  const profileName = requestedIsp || 'all-isps';
+  const profileHeaders = {
+    'Profile-Title': profileName,
+    'Profile-Update-Interval': '24',
+    'Content-Disposition': `attachment; filename=${profileName}; filename*=UTF-8''${encodeURIComponent(profileName)}`,
+    'Subscription-Userinfo': `upload=0; download=0; total=0; expire=${expire}`
+  };
 
   if (isRaw) {
     return new Response(uriList, {
@@ -1467,7 +1604,8 @@ export async function onRequest(context) {
       headers: { 
         'Content-Type': 'text/plain; charset=utf-8', 
         'Cache-Control': 'no-cache', 
-        'Access-Control-Allow-Origin': '*'
+        'Access-Control-Allow-Origin': '*',
+        ...profileHeaders
       }
     });
   }
@@ -1482,7 +1620,7 @@ export async function onRequest(context) {
       'Content-Type': 'text/plain; charset=utf-8', 
       'Cache-Control': 'no-cache', 
       'Access-Control-Allow-Origin': '*',
-      'Subscription-Userinfo': `upload=0; download=0; total=0; expire=${expire}`
+      ...profileHeaders
     }
   });
 }
@@ -1531,8 +1669,14 @@ export async function onRequest(context) {
     ? decodeDomainList("DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER")
     : [];
   const directBulkApps = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
+  const hysteriaUseBbr = HYSTERIA_USE_BBR_PLACEHOLDER;
   const telegramDirectEnabled = DIRECT_BULK_ENABLED_PLACEHOLDER
     && directBulkApps.includes("telegram");
+  const hy2BandwidthLines = hysteriaUseBbr
+    ? ''
+    : `
+    up: "HYSTERIA_UP_PLACEHOLDER Mbps"
+    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`;
 
   const proxies = entries.flatMap((entry) => [
     `  - name: "T-${entry.id}-TJ"
@@ -1557,9 +1701,7 @@ export async function onRequest(context) {
     alpn:
       - h3
     sni: HYSTERIA_DOMAIN_PLACEHOLDER
-    skip-cert-verify: false
-    up: "HYSTERIA_UP_PLACEHOLDER Mbps"
-    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`,
+    skip-cert-verify: false${hy2BandwidthLines}`,
   ]);
 
   const proxyGroupLines = proxyNames.map((name) => `      - "${name}"`).join('\n');
@@ -1741,7 +1883,7 @@ proxy-groups:
     type: fallback
     proxies:
 ${proxyGroupLines}
-    url: "https://cp.cloudflare.com"
+    url: "https://cp.cloudflare.com/generate_204"
     interval: 300
     timeout: 3000
 
@@ -1749,17 +1891,18 @@ ${proxyGroupLines}
     type: url-test
     proxies:
 ${proxyGroupLines}
-    url: "https://cp.cloudflare.com"
+    url: "https://cp.cloudflare.com/generate_204"
     interval: 300
     tolerance: 50
     timeout: 3000
 
   - name: "📦 TX 大流量"
-    type: fallback
+    type: url-test
     proxies:
 ${txProxyGroupLines}
     url: "https://www.youtube.com/generate_204"
     interval: 300
+    tolerance: 100
     timeout: 3000
 
   - name: "🚀 节点选择"
@@ -1768,11 +1911,12 @@ ${txProxyGroupLines}
 ${selectProxyLines}
 
   - name: "🛡️ ISP 出口自动"
-    type: fallback
+    type: url-test
     proxies:
 ${ispOnlyProxyGroupLines}
-    url: "https://cp.cloudflare.com"
+    url: "https://cp.cloudflare.com/generate_204"
     interval: 300
+    tolerance: 50
     timeout: 3000
 
   - name: "🤖 AI 服务"
@@ -1783,11 +1927,12 @@ ${ispOnlyProxyGroupLines}
 ${ispOnlyProxyGroupLines}
 
   - name: "🤖 AI 自动"
-    type: fallback
+    type: url-test
     proxies:
 ${ispOnlyProxyGroupLines}
     url: "https://chat.openai.com/cdn-cgi/trace"
     interval: 300
+    tolerance: 75
     timeout: 5000
 
   - name: "📲 电报信息"
@@ -1879,7 +2024,7 @@ ${txBulkRuleLines}
       'Access-Control-Allow-Origin': '*',
       'Profile-Title': profileName,
       'Profile-Update-Interval': '24',
-      'Content-Disposition': `attachment; filename=${profileName}`,
+      'Content-Disposition': `attachment; filename=${profileName}; filename*=UTF-8''${encodeURIComponent(profileName)}`,
       'Subscription-Userinfo': `upload=0; download=0; total=0; expire=${expire}`
     }
   });
@@ -1900,6 +2045,7 @@ const CUSTOM_GROUP_NAMES = new Set([
 const AI_ISP_DOMAINS = AI_ISP_DOMAINS_JSON_PLACEHOLDER;
 const TX_BULK_DOMAINS = DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER;
 const DIRECT_BULK_APPS = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
+const HYSTERIA_USE_BBR = HYSTERIA_USE_BBR_PLACEHOLDER;
 const TELEGRAM_DIRECT_ENABLED = DIRECT_BULK_APPS.includes("telegram");
 const IP_CHECK_DOMAINS = [
   "ip.sb",
@@ -1943,8 +2089,12 @@ const injectedProxies = ispEntries.flatMap((entry) => [
     alpn: ["h3"],
     sni: "HYSTERIA_DOMAIN_PLACEHOLDER",
     "skip-cert-verify": false,
-    up: "HYSTERIA_UP_PLACEHOLDER Mbps",
-    down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
+    ...(HYSTERIA_USE_BBR
+      ? {}
+      : {
+          up: "HYSTERIA_UP_PLACEHOLDER Mbps",
+          down: "HYSTERIA_DOWN_PLACEHOLDER Mbps",
+        }),
   },
 ]);
 
@@ -2051,18 +2201,20 @@ function main(config) {
   config["proxy-groups"] = [
     {
       name: FINAL_GROUP_NAME,
-      type: "fallback",
+      type: "url-test",
       proxies: finalNodeNames,
       url: "https://cp.cloudflare.com/generate_204",
       interval: 300,
+      tolerance: 50,
       timeout: 5000,
     },
     {
       name: TX_GROUP_NAME,
-      type: "fallback",
+      type: "url-test",
       proxies: txNodeNames,
       url: "https://www.youtube.com/generate_204",
       interval: 300,
+      tolerance: 100,
       timeout: 5000,
     },
     transitGroup,
@@ -2119,6 +2271,7 @@ GLOBALJS
   local direct_bulk_domains_json='[]'
   local direct_bulk_apps_json='[]'
   local direct_bulk_enabled_js=false
+  local hy2_use_bbr_js=false
   ai_isp_domains_base64=$(printf '%s' "${AI_ISP_DOMAINS}" | base64 | tr -d '\n')
   direct_bulk_domains_base64=$(printf '%s' "${DIRECT_BULK_DOMAINS}" | base64 | tr -d '\n')
   ai_isp_domains_json=$(jq -cn --arg domains "${AI_ISP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
@@ -2126,6 +2279,9 @@ GLOBALJS
     direct_bulk_enabled_js=true
     direct_bulk_domains_json=$(jq -cn --arg domains "${DIRECT_BULK_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
     direct_bulk_apps_json=$(jq -cn --arg apps "${DIRECT_BULK_APPS}" '$apps | ascii_downcase | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
+  fi
+  if [[ "${HYSTERIA_CC_MODE,,}" == "bbr" ]]; then
+    hy2_use_bbr_js=true
   fi
   
   sed -i "s|SECRET_PLACEHOLDER|${secret}|g" "${functions_dir}/c.js"
@@ -2141,6 +2297,7 @@ GLOBALJS
   sed -i "s|DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER|${direct_bulk_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_ENABLED_PLACEHOLDER|${direct_bulk_enabled_js}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${functions_dir}/c.js"
+  sed -i "s|HYSTERIA_USE_BBR_PLACEHOLDER|${hy2_use_bbr_js}|g" "${functions_dir}/c.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${functions_dir}/c.js"
   sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${functions_dir}/c.js"
@@ -2149,6 +2306,7 @@ GLOBALJS
   sed -i "s|AI_ISP_DOMAINS_JSON_PLACEHOLDER|${ai_isp_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|${direct_bulk_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|HYSTERIA_USE_BBR_PLACEHOLDER|${hy2_use_bbr_js}|g" "${pages_dir}/global-extension.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${pages_dir}/global-extension.js"
   sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_DOMAIN_PLACEHOLDER|${HYSTERIA_DOMAIN}|g" "${pages_dir}/global-extension.js"
@@ -2220,10 +2378,24 @@ REDIRECTS
 
 main() {
   parse_args "$@"
-  require_root
   require_supported_os
   load_env
   validate_config
+  if (( VALIDATE_ONLY == 1 )); then
+    command -v jq >/dev/null 2>&1 || {
+      log_error "校验需要 jq"
+      exit 1
+    }
+    command -v sing-box >/dev/null 2>&1 || {
+      log_error "校验需要 sing-box"
+      exit 1
+    }
+    generate_config
+    validate_generated_config
+    log_success "只读校验完成，未修改系统配置"
+    return
+  fi
+  require_root
   install_dependencies
   install_singbox
   prepare_dirs
@@ -2231,6 +2403,7 @@ main() {
   generate_config
   validate_generated_config
   deploy_config
+  apply_network_tuning
   setup_firewall
   restart_service
   setup_egress_monitor

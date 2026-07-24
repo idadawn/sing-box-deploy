@@ -1,113 +1,108 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file describes the current repository contract for coding agents.
 
 ## Purpose
 
-Automated deployment of a hybrid sing-box proxy server on Debian/Ubuntu. Sets up Trojan (TCP:443) and Hysteria2 (UDP:8443) inbounds with URLTest-based failover between an ISP SOCKS5 exit and the VPS's native IP. Client subscriptions are hosted on Cloudflare Pages.
+Deploy one Debian/Ubuntu sing-box ingress server with deterministic ISP SOCKS5 egress. Every unexpired TSV entry receives one Trojan/TCP inbound, one Hysteria2/UDP inbound, and independent v2rayN/Clash subscriptions.
 
-## Common Commands
+The retired J server is out of scope. Never add, contact, or deploy to J.
+
+## Safety invariants
+
+- An inbound for ISP `id` must route normal and AI traffic only to `isp-out-id`.
+- Do not add automatic cross-ISP or public-VPS fallback.
+- Keep `route.final=block`.
+- Public direct egress is allowed only for explicit `DIRECT_BULK_*` rules.
+- `.env`, `isp-list.tsv`, generated subscriptions, and migration bundles contain secrets and must never enter Git.
+- Preserve TSV row order because it determines stable ingress ports.
+- Homepage hiding is presentation only, not authorization.
+
+## Common commands
 
 ```bash
-# Full deployment
 sudo ./install.sh
-
-# Force reinstall sing-box package
 sudo ./install.sh --force-reinstall
-
-# Skip UFW firewall configuration
 sudo ./install.sh --skip-firewall
+sudo ./install.sh --skip-network-tuning
+sudo ./install.sh --no-start
+./install.sh --validate-only
+sudo ./manage.sh
 
-# Interactive management menu (status, logs, restart, backup, uninstall)
-./manage.sh
-
-# Validate sing-box config syntax
 sing-box check -c /etc/sing-box/config.json
-
-# Check service status / follow logs
 systemctl status sing-box
 journalctl -u sing-box -f
 
-# Manual Cloudflare Pages subscription deploy
-cd cloudflare-pages-sub && wrangler pages deploy .
-
-# Test SOCKS5 exit IP
-curl --socks5 USER:PASS@HOST:PORT https://ipinfo.io/ip
-
-# Test subscription endpoints
-curl -s https://<pages-domain>/v  # v2rayN
-curl -s https://<pages-domain>/c  # Clash
+./migrate.sh export
+./migrate.sh import /path/to/migration-*.tar.gz.enc
 ```
 
 ## Architecture
 
-```
-Client (v2rayN / Clash)
-    │
-    ├── Trojan TCP:443  (tj.<domain>)
-    └── Hysteria2 UDP:8443  (hy2.<domain>)
-              │
-         sing-box server
-       /etc/sing-box/config.json
-              │
-         URLTest (every 3 min against gstatic 204)
-              │
-    ┌─────────┴─────────┐
-    │                   │
-isp-out               direct-out
-(1024proxy SOCKS5)    (VPS native IP)
+```text
+v2rayN / v2rayNG / Clash / Mihomo
+             |
+       Trojan or Hysteria2
+             |
+       T sing-box ingress
+             |
+   matching ISP SOCKS5 egress
 ```
 
-**Inbounds**: Two protocols share the same outbound logic via `egress-auto` URLTest selector.
+Each ISP row produces:
 
-**Certificates**: Auto-provisioned via Let's Encrypt with Cloudflare DNS-01 challenge; stored in `/var/lib/sing-box/certmagic/`.
+- `trojan-<id>-in` and `hy2-<id>-in`
+- `isp-out-<id>`
+- `T-<id>-TJ` and `T-<id>-HY2`
+- `/v2?isp=<id>` and `/c?isp=<id>`
 
-**Subscriptions**: Cloudflare Pages Functions (`cloudflare-pages-sub/functions/`) serve:
-- `/v` — Base64-encoded v2rayN URI list
-- `/c` — Full Clash YAML (geo-routing, DNS, 30+ streaming service rules)
-- `_redirects` masks real paths behind short URLs
+## Performance contract
 
-## Key Files
+- `HYSTERIA_CC_MODE=bbr` is the default: generated Hysteria2 clients omit fixed up/down values and the server ignores client bandwidth declarations.
+- `HYSTERIA_CC_MODE=brutal` emits configured up/down values.
+- Linux tuning is managed in `/etc/sysctl.d/99-sing-box-performance.conf`.
+- The default UDP receive/send maximum is 16 MiB.
+- Linux TCP BBR + `fq` are enabled when the kernel supports them.
+- TCP Fast Open is applied to Trojan listen fields and ISP SOCKS dial fields.
+
+## Key files
 
 | File | Role |
-|------|------|
-| `install.sh` | Main deployment script (~1350 lines); parses `.env`, generates and deploys `/etc/sing-box/config.json` via `jq`, configures UFW, manages systemd, deploys Cloudflare Pages subscriptions |
-| `manage.sh` | Post-deploy management menu: status, logs, restart, IP tests, config check, backup, uninstall |
-| `.env` / `.env.example` | Non-ISP runtime configuration; parsed without `source` to avoid side effects |
-| `isp-list.tsv` / `isp-list.example.tsv` | Private ISP inventory and committed field-only example; the private file is gitignored and must be mode 600 |
-| `cloudflare-pages-sub/functions/v2.js` | Cloudflare Pages Function: returns v2rayN subscription |
-| `cloudflare-pages-sub/functions/c.js` | Cloudflare Pages Function: returns Clash YAML subscription |
-| `cloudflare-pages-sub/wrangler.toml` | Cloudflare Pages project config |
-| `nodes.yaml` | Reference node definitions for manual client setup |
+| --- | --- |
+| `install.sh` | Safe env parsing, validation, sing-box JSON generation, network/UFW/systemd setup, Pages asset generation and deployment |
+| `manage.sh` | Status, logs, egress checks, backups, encrypted migration export, uninstall |
+| `migrate.sh` | AES-256-CBC/PBKDF2 export and validated import of `.env` plus ISP TSV |
+| `.env.example` | Non-secret configuration reference |
+| `isp-list.example.tsv` | Field-only private inventory example |
+| `sync-clash-rules.sh` | Atomic rule snapshot validation and Pages redeploy |
+| `cloudflare-pages-sub/index.html` | Public subscription entry page |
 
-## Configuration
+Pages assets under `cloudflare-pages-sub/functions/`, `subscriptions.json`, `global-extension.js`, and rule snapshots are generated or refreshed by the deployment flow.
 
-`.env` must be populated before running `install.sh`. Key variables:
+## Subscription endpoints
 
-- `TROJAN_DOMAIN` / `HYSTERIA_DOMAIN` — Cloudflare-proxied DNS entries
-- `CF_API_TOKEN` — Cloudflare DNS:Edit token for ACME challenge
-- `ISP_LIST_FILE` — 7-column TSV inventory: id, host, HTTP port, SOCKS5 port, username, password, expiry date
-- `TROJAN_PASSWORD` / `HYSTERIA_PASSWORD` — auto-generate with `openssl rand -base64 32`
-- `CF_PAGES_API_TOKEN` / `CF_ACCOUNT_ID` — for `wrangler pages deploy`
-- `ISP_PORT_STEP` — deterministic client ingress port spacing; row order must remain stable
+- `/v2` and `/v2?isp=<id>`: Base64 v2rayN/v2rayNG subscriptions
+- `/c` and `/c?isp=<id>`: Clash/Mihomo YAML
+- `/s`: Clash Verge/Mihomo global extension
 
-**Constraint**: The `.env` parser does not support inline comments — values must not contain `#`.
+Single-ISP responses expose a stable profile name through `Profile-Title` and `Content-Disposition`, with a 24-hour profile update interval.
 
-## install.sh Internals
+## Validation expectations
 
-- Config JSON is built with `jq -n` (not string templating), so variables are safely embedded.
-- UFW rules are added incrementally — existing rules are not reset.
-- Cloudflare Pages Functions (`v2.js`, `c.js`) are generated dynamically at deploy time with actual credential values injected.
-- Subscription verification retries 3 times before issuing a warning (not a hard failure).
-- On config deployment failure, the previous config is restored from a timestamped backup.
-- `--no-start` flag installs without starting the service (useful in CI/test contexts).
+Before deployment:
 
-## Runtime Paths
+```bash
+bash -n install.sh manage.sh migrate.sh sync-clash-rules.sh
+git diff --check
+```
 
-| Path | Contents |
-|------|----------|
-| `/etc/sing-box/config.json` | Active sing-box configuration (mode 600) |
-| `/var/lib/sing-box/certmagic/` | ACME certificates (mode 700) |
-| `/etc/apt/sources.list.d/sagernet.sources` | Official sing-box APT repo |
-| `client-info.txt` | Generated client connection strings |
-| `deploy-summary.txt` | Last deployment status |
+On the server, additionally validate:
+
+```bash
+sing-box check -c /etc/sing-box/config.json
+systemctl is-active sing-box
+sysctl net.core.rmem_max net.core.wmem_max
+sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_fastopen
+```
+
+Test both TCP and UDP ingress, every active ISP SOCKS5 exit, subscription response headers, YAML parsing, and the fixed-ingress-to-fixed-egress invariant.

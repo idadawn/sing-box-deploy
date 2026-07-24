@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
@@ -67,6 +68,7 @@ show_menu() {
     echo "6. 检查配置文件语法"
     echo "7. 备份配置"
     echo "8. 卸载 sing-box"
+    echo "9. 生成加密迁移包"
     echo "0. 退出"
     echo "========================================"
 }
@@ -174,6 +176,14 @@ backup_config() {
     echo -e "${GREEN}备份已保存: ${backup_dir}.tar.gz${NC}"
 }
 
+export_migration_bundle() {
+    if [[ ! -x "${SCRIPT_DIR}/migrate.sh" ]]; then
+        echo -e "${RED}未找到可执行的 migrate.sh${NC}"
+        return 1
+    fi
+    "${SCRIPT_DIR}/migrate.sh" export
+}
+
 uninstall_singbox() {
     echo -e "${RED}警告：这将卸载 sing-box，并删除 /etc/sing-box 与 /var/lib/sing-box${NC}"
     read -rp "确认卸载? [y/N]: " confirm
@@ -189,7 +199,7 @@ uninstall_singbox() {
 
 while true; do
     show_menu
-    read -rp "请选择 [0-8]: " choice
+    read -rp "请选择 [0-9]: " choice
 
     case "$choice" in
         1) view_status ;;
@@ -200,6 +210,7 @@ while true; do
         6) check_config ;;
         7) backup_config ;;
         8) uninstall_singbox ;;
+        9) export_migration_bundle ;;
         0) exit 0 ;;
         *) echo -e "${RED}无效选项${NC}" ;;
     esac
