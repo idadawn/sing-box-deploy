@@ -627,7 +627,7 @@
 
   <script>
     const base = `${window.location.protocol}//${window.location.host}`;
-    const homepageHiddenIds = new Set(['own']);
+    const homepageHiddenIds = new Set(['own', 'dawn']);
     const showAllSubscriptions = new URL(window.location.href).searchParams.get('all') === '1';
     const elements = {
       list: document.getElementById('nodeList'),
