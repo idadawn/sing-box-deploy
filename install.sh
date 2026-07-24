@@ -1467,9 +1467,9 @@ verify_subscription() {
       local personal_c_profile personal_c_update_interval personal_c_filename personal_c_filename_expected
       for ((index = 0; index < ISP_COUNT; index++)); do
         id="${ISP_IDS[index]}"
-        personal_v2=$(curl -sL --max-time 10 "https://${domain}/v2?isp=${id}&${verification_query}" 2>/dev/null | base64 -d 2>/dev/null)
-        personal_c=$(curl -sL --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null)
-        personal_c_headers=$(curl -sL -D - -o /dev/null --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null | tr -d '\r')
+        personal_v2=$(curl -sL --max-time 10 "https://${domain}/v2?isp=${id}&${verification_query}" 2>/dev/null | base64 -d 2>/dev/null || true)
+        personal_c=$(curl -sL --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null || true)
+        personal_c_headers=$(curl -sL -D - -o /dev/null --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null | tr -d '\r' || true)
         personal_c_profile=$(awk -F': *' 'tolower($1) == "profile-title" {print $2; exit}' <<< "${personal_c_headers}")
         personal_c_update_interval=$(awk -F': *' 'tolower($1) == "profile-update-interval" {print $2; exit}' <<< "${personal_c_headers}")
         personal_c_filename=$(awk -F': *' 'tolower($1) == "content-disposition" {print $2; exit}' <<< "${personal_c_headers}")
