@@ -326,6 +326,11 @@
       background: linear-gradient(135deg, #238d70, #17614e);
     }
 
+    .client-icon.shadowrocket {
+      color: #ffe8ef;
+      background: linear-gradient(135deg, #dc557b, #9d3152);
+    }
+
     .client h3 {
       margin: 0;
       font-size: 16px;
@@ -359,6 +364,15 @@
     }
 
     .url-box:focus { border-color: var(--line-strong); }
+
+    .url-label {
+      display: block;
+      margin: 12px 0 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .url-label:first-of-type { margin-top: 0; }
 
     .actions {
       display: flex;
@@ -500,7 +514,7 @@
     <header class="hero">
       <div class="badge">T 中继 · 私有 ISP 出口</div>
       <h1>多出口订阅入口</h1>
-      <p class="subtitle">从左侧选择一个出口节点，右侧会显示该节点专属的 v2ray 与 Clash 订阅地址。每个订阅只包含对应出口的 Trojan 和 Hysteria2 节点。</p>
+      <p class="subtitle">从左侧选择一个出口节点，右侧会显示该节点专属的 v2ray、Clash 与 Shadowrocket 入口。每个节点订阅只包含对应出口的 Trojan 和 Hysteria2 节点。</p>
     </header>
 
     <section class="workspace" aria-label="订阅选择器">
@@ -567,11 +581,41 @@
               <a id="clashOpen" class="button" href="#" target="_blank" rel="noopener">打开订阅</a>
             </div>
           </article>
+
+          <article class="subscription-card">
+            <div class="subscription-head">
+              <div class="client">
+                <span class="client-icon shadowrocket">SR</span>
+                <div>
+                  <h3>Shadowrocket iOS</h3>
+                  <p>节点订阅 + Telegram 高优先级模块</p>
+                </div>
+              </div>
+            </div>
+            <span class="url-label">① 节点订阅：添加为 Subscribe</span>
+            <div class="url-row">
+              <input id="shadowrocketUrl" class="url-box" type="text" readonly aria-label="Shadowrocket 节点订阅地址" />
+              <button class="button copy-button" type="button" data-copy-target="shadowrocketUrl">复制订阅</button>
+            </div>
+            <span class="url-label">② Telegram 模块：配置 → 模块 → 添加</span>
+            <div class="url-row">
+              <input id="shadowrocketModuleUrl" class="url-box" type="text" readonly aria-label="Shadowrocket Telegram 模块地址" />
+              <button class="button copy-button" type="button" data-copy-target="shadowrocketModuleUrl">复制模块</button>
+            </div>
+            <div class="actions">
+              <a id="shadowrocketOpen" class="button primary" href="#" target="_blank" rel="noopener">打开节点订阅</a>
+              <a id="shadowrocketModuleOpen" class="button" href="#" target="_blank" rel="noopener">查看 Telegram 模块</a>
+            </div>
+          </article>
         </div>
 
         <div class="notice">
           <span class="notice-icon">ⓘ</span>
           <span><strong>固定出口：</strong>AI 与普通流量会固定使用当前选择的 ISP，不会跨 ISP，也不会回落到 T 服务器公网直出。</span>
+        </div>
+        <div class="notice">
+          <span class="notice-icon">ⓘ</span>
+          <span><strong>Shadowrocket：</strong>先添加节点订阅并选择一个 T 节点，再把 Telegram 模块加入“配置 → 模块”并启用；模块会覆盖原配置中误判为 DIRECT 的 Telegram 规则。</span>
         </div>
       </section>
     </section>
@@ -592,8 +636,12 @@
       expiry: document.getElementById('selectedExpiry'),
       v2Url: document.getElementById('v2Url'),
       clashUrl: document.getElementById('clashUrl'),
+      shadowrocketUrl: document.getElementById('shadowrocketUrl'),
+      shadowrocketModuleUrl: document.getElementById('shadowrocketModuleUrl'),
       v2Import: document.getElementById('v2Import'),
       clashImport: document.getElementById('clashImport'),
+      shadowrocketOpen: document.getElementById('shadowrocketOpen'),
+      shadowrocketModuleOpen: document.getElementById('shadowrocketModuleOpen'),
       v2Open: document.getElementById('v2Open'),
       clashOpen: document.getElementById('clashOpen'),
       toast: document.getElementById('toast')
@@ -612,15 +660,21 @@
 
       const v2Url = absoluteUrl(entry.v2);
       const clashUrl = absoluteUrl(entry.clash);
+      const shadowrocketUrl = absoluteUrl(entry.shadowrocket || entry.v2);
+      const shadowrocketModuleUrl = absoluteUrl(entry.shadowrocket_module || '/sr');
 
       elements.name.textContent = entry.id;
       elements.expiry.textContent = `到期 ${entry.expires}`;
       elements.v2Url.value = v2Url;
       elements.clashUrl.value = clashUrl;
+      elements.shadowrocketUrl.value = shadowrocketUrl;
+      elements.shadowrocketModuleUrl.value = shadowrocketModuleUrl;
       elements.v2Import.href = `v2rayng://install-config/?url=${encodeURIComponent(v2Url)}`;
       elements.clashImport.href = `clash://install-config?url=${encodeURIComponent(clashUrl)}`;
       elements.v2Open.href = v2Url;
       elements.clashOpen.href = clashUrl;
+      elements.shadowrocketOpen.href = shadowrocketUrl;
+      elements.shadowrocketModuleOpen.href = shadowrocketModuleUrl;
 
       elements.list.querySelectorAll('.node-button').forEach((button) => {
         button.setAttribute('aria-selected', String(button.dataset.id === id));
@@ -707,7 +761,7 @@
         document.execCommand('copy');
         textarea.remove();
       }
-      showToast('订阅地址已复制');
+      showToast('地址已复制');
     }
 
     document.querySelectorAll('[data-copy-target]').forEach((button) => {

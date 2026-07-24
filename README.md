@@ -12,7 +12,7 @@
 - 同时提供 Trojan/TCP 与 Hysteria2/UDP，覆盖不同网络条件。
 - 默认失败关闭：未命中明确规则的服务端流量由 `route.final=block` 拒绝。
 - ISP 地址、账号和密码只保存在服务器本地私有 TSV 文件中。
-- 自动生成 v2rayN/v2rayNG 与 Clash/Mihomo 订阅，并发布到 Cloudflare Pages。
+- 自动生成 v2rayN/v2rayNG、Clash/Mihomo 与 Shadowrocket 入口，并发布到 Cloudflare Pages。
 - 默认使用 Hysteria2 自适应拥塞控制，并优化 Linux UDP 缓冲、TCP BBR/fq 与 TCP Fast Open。
 - 自动同步并校验 Clash 规则快照，失败时继续使用上一版。
 - 支持出口健康检查、systemd 定时任务和可选 SMTP 告警。
@@ -21,7 +21,7 @@
 ## 架构
 
 ```text
-v2rayN / v2rayNG / Clash / Mihomo
+v2rayN / v2rayNG / Clash / Mihomo / Shadowrocket
                 │
       ┌─────────┴─────────┐
       │                   │
@@ -177,6 +177,8 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | `CLASH_RULESET_BASE_URL` | Clash 规则地址，留空使用当前 Pages 镜像 |
 | `CLASH_RULESET_UPSTREAM_REPO` | 规则上游仓库 |
 | `CLASH_RULESET_UPSTREAM_BRANCH` | 规则上游分支 |
+| `SHADOWROCKET_TELEGRAM_REPO` | Shadowrocket Telegram 专用规则上游 |
+| `SHADOWROCKET_TELEGRAM_BRANCH` | Shadowrocket Telegram 规则上游分支 |
 
 ### 运维
 
@@ -206,8 +208,9 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 - 不会从当前 ISP 静默切换到其他 ISP。
 - 不会把 T 公网 IP 当作通用兜底出口。
 - 只有显式列入大流量规则的域名、应用或 IP/CIDR 可以使用 `direct-out`。
-- Telegram 应用开关会同时添加域名与 IP/CIDR 规则，原生 MTProto 流量不依赖域名嗅探。
+- Telegram 应用开关会同时添加域名与 IP/CIDR 规则，覆盖 `5.28.192.0/18`、完整 `91.108.0.0/16` 等专用地址段；原生 MTProto 流量不依赖域名嗅探。
 - Clash 客户端使用每日同步的 `telegramcidr` 规则；服务端使用脚本内置 CIDR，并可通过 `DIRECT_BULK_IP_CIDRS` 追加范围。
+- Shadowrocket 使用独立的高优先级 `/sr` 模块，避免 Telegram 被客户端原配置误判为 `DIRECT`。
 - 对出口一致性要求最高时，应保持 `DIRECT_BULK_ENABLED=false`。
 
 ## 订阅
@@ -219,6 +222,8 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | 单 ISP v2rayN/v2rayNG | `https://<SUB_DOMAIN>/v2?isp=<编号>` |
 | 单 ISP Clash/Mihomo | `https://<SUB_DOMAIN>/c?isp=<编号>` |
 | Clash Verge 全局扩展脚本 | `https://<SUB_DOMAIN>/s` |
+| Shadowrocket 单 ISP 节点订阅 | `https://<SUB_DOMAIN>/v2?isp=<编号>` |
+| Shadowrocket Telegram 模块 | `https://<SUB_DOMAIN>/sr` |
 
 单 ISP 订阅只返回该编号的 Trojan 与 Hysteria2 节点。Clash 响应使用以下响应头保持客户端显示名稳定：
 
@@ -244,12 +249,23 @@ Content-Disposition: attachment; filename=<编号>
 
 `/s` 同样含有节点凭据，不应公开转发。
 
+### Shadowrocket
+
+Shadowrocket 的节点订阅和分流配置是两部分。只添加 `/v2` 会导入节点，但不会覆盖手机上已有的 `DIRECT` 规则。推荐按以下方式配置：
+
+1. 首页选择 ISP，复制 Shadowrocket 的“节点订阅”，在 Shadowrocket 中以 `Subscribe` 类型添加。
+2. 选择一个 `T-<编号>-TJ` 或 `T-<编号>-HY2` 节点。
+3. 进入“配置 → 模块”，添加 `https://<SUB_DOMAIN>/sr` 并启用。
+4. 使用“配置”路由模式，完全退出并重新打开 Telegram 后测试。
+
+`/sr` 只包含规则、不包含节点凭据。模块把 Telegram 域名和 IP 规则强制交给 Shadowrocket 当前选择的 `PROXY`，其优先级高于原配置中的普通规则。完整规则每天从 [blackmatrix7/ios_rule_script](https://github.com/blackmatrix7/ios_rule_script/tree/master/rule/Shadowrocket/Telegram) 同步到本站镜像；模块本身还内置关键 CIDR，避免规则镜像首次加载失败时完全失效。
+
 ## 规则同步
 
 `clash-rules-sync.timer` 每天触发一次同步：
 
-1. 拉取指定上游分支。
-2. 校验所需规则文件完整性。
+1. 拉取 Loyalsoldier Clash 规则和 blackmatrix7 Shadowrocket Telegram 规则的指定提交。
+2. 分别校验 YAML payload 与 Shadowrocket 规则格式、数量和关键 Telegram 地址段。
 3. 只有全部检查成功才原子替换当前快照。
 4. 重新发布 Cloudflare Pages。
 5. 同步失败时保留上一版可用规则。

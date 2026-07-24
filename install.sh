@@ -57,10 +57,13 @@ DEFAULT_DIRECT_BULK_DOMAINS+=",huggingface.co,hf.co,huggingfaceusercontent.com,h
 DEFAULT_DIRECT_BULK_DOMAINS+=",1drv.com,1drv.ms,livefilestore.com,oneclient.sfx.ms,onedrive.com,onedrive.live.com,photos.live.com,skydrive.wns.windows.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",sharepoint.com,sharepointonline.com,spoprod-a.akamaihd.net,storage.live.com,storage.msn.com"
 
-DEFAULT_TELEGRAM_DOMAINS="telegram.org,t.me,telegram.me,telegram.dog"
-DEFAULT_TELEGRAM_IP_CIDRS="91.105.192.0/23,91.108.4.0/22,91.108.8.0/21,91.108.16.0/21,91.108.56.0/22"
-DEFAULT_TELEGRAM_IP_CIDRS+=",95.161.64.0/20,149.154.160.0/20,185.76.151.0/24"
-DEFAULT_TELEGRAM_IP_CIDRS+=",2001:67c:4e8::/48,2001:b28:f23c::/47,2001:b28:f23f::/48,2a0a:f280::/32"
+DEFAULT_TELEGRAM_DOMAINS="api.imem.app,api.swiftgram.app,cdn-telegram.org,comments.app,contest.com,graph.org,legra.ph"
+DEFAULT_TELEGRAM_DOMAINS+=",mbrx.app,quiz.directory,stel.com,t.me,tdesktop.com,telega.one,telegra.ph"
+DEFAULT_TELEGRAM_DOMAINS+=",telegram-cdn.org,telegram.dog,telegram.me,telegram.org,telegram.space,telegramdownload.com"
+DEFAULT_TELEGRAM_DOMAINS+=",telesco.pe,tg.dev,tx.me,usercontent.dev"
+DEFAULT_TELEGRAM_IP_CIDRS="5.28.192.0/18,91.105.192.0/23,91.108.0.0/16,95.161.64.0/20"
+DEFAULT_TELEGRAM_IP_CIDRS+=",109.239.140.0/24,139.59.210.98/32,149.154.160.0/20,185.76.151.0/24,196.55.216.167/32"
+DEFAULT_TELEGRAM_IP_CIDRS+=",2001:67c:4e8::/48,2001:b28:f23c::/47,2001:b28:f23f::/48,2a0a:f280::/29"
 
 DEFAULT_CLASH_RULESET_UPSTREAM_REPO="https://github.com/Loyalsoldier/clash-rules.git"
 DEFAULT_CLASH_RULESET_UPSTREAM_BRANCH="release"
@@ -1361,9 +1364,11 @@ verify_subscription() {
   local v2_ok=0
   local c_ok=0
   local script_ok=0
+  local shadowrocket_ok=0
   local rules_ok=0
   local c_content=""
   local script_content=""
+  local shadowrocket_content=""
   local verification_query="verify=$(date +%s)"
   
   # 等待几秒让部署生效
@@ -1424,20 +1429,39 @@ verify_subscription() {
       fi
     fi
 
+    # Shadowrocket 模块必须强制 Telegram 走 PROXY，并引用本站每日同步的专用规则。
+    if [[ $shadowrocket_ok -eq 0 ]]; then
+      shadowrocket_content=$(curl -sL --max-time 10 "https://${domain}/sr?${verification_query}" 2>/dev/null)
+      if grep -Fq '#!name=Telegram via PROXY' <<< "${shadowrocket_content}" \
+        && grep -Fq "RULE-SET,https://${domain}/rules/shadowrocket-telegram.list,PROXY" <<< "${shadowrocket_content}" \
+        && grep -Fq 'IP-CIDR,91.108.0.0/16,PROXY,no-resolve' <<< "${shadowrocket_content}" \
+        && ! grep -Eq '^(DOMAIN|DOMAIN-SUFFIX|IP-CIDR).*,DIRECT' <<< "${shadowrocket_content}"; then
+        log_success "Shadowrocket Telegram 模块正常"
+        shadowrocket_ok=1
+      else
+        log_warn "Shadowrocket Telegram 模块验证失败，重试..."
+      fi
+    fi
+
     # 元数据仅在全部规则文件校验成功后生成，可作为线上快照完整性标记。
     if [[ $rules_ok -eq 0 ]]; then
       local rules_metadata
       rules_metadata=$(curl -sL --max-time 10 "https://${domain}/rules/metadata.json?${verification_query}" 2>/dev/null)
-      if jq -e '(.upstream_sha | strings | test("^[0-9a-f]{40}$")) and (.files | length == 10)' <<< "$rules_metadata" >/dev/null 2>&1; then
-        log_success "Loyalsoldier 规则镜像正常"
+      if jq -e '
+        (.upstream_sha | strings | test("^[0-9a-f]{40}$")) and
+        (.shadowrocket_telegram_sha | strings | test("^[0-9a-f]{40}$")) and
+        (.files | length == 11) and
+        (.files | index("shadowrocket-telegram.list") != null)
+      ' <<< "$rules_metadata" >/dev/null 2>&1; then
+        log_success "Clash / Shadowrocket 规则镜像正常"
         rules_ok=1
       else
-        log_warn "Loyalsoldier 规则镜像验证失败，重试..."
+        log_warn "Clash / Shadowrocket 规则镜像验证失败，重试..."
       fi
     fi
     
     # 基础入口通过后，逐个验证私有 ISP 订阅只包含对应节点。
-    if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $rules_ok -eq 1 ]]; then
+    if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $shadowrocket_ok -eq 1 && $rules_ok -eq 1 ]]; then
       local personal_ok=1
       local index id personal_v2 personal_c personal_c_headers
       local personal_c_profile personal_c_update_interval personal_c_filename personal_c_filename_expected
@@ -1483,8 +1507,11 @@ verify_subscription() {
   if [[ $script_ok -eq 0 ]]; then
     log_error "Clash Verge 全局扩展脚本验证失败: https://${domain}/s"
   fi
+  if [[ $shadowrocket_ok -eq 0 ]]; then
+    log_error "Shadowrocket Telegram 模块验证失败: https://${domain}/sr"
+  fi
   if [[ $rules_ok -eq 0 ]]; then
-    log_error "Loyalsoldier 规则镜像验证失败: https://${domain}/rules/metadata.json"
+    log_error "Clash / Shadowrocket 规则镜像验证失败: https://${domain}/rules/metadata.json"
   fi
   log_info "请检查: 1) DNS 解析 2) Cloudflare Pages 部署状态 3) 自定义域名绑定"
   return 1
@@ -1644,6 +1671,42 @@ V2JS
   local isp_public_list_base64
   isp_public_list_base64=$(printf '%s' "${ISP_PUBLIC_LIST_JSON}" | base64 | tr -d '\n')
   sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${functions_dir}/v2.js"
+
+  # 生成 Shadowrocket Telegram 高优先级规则模块。
+  # 节点仍从 /v2 导入；模块只负责避免 Telegram 被客户端原配置误判为 DIRECT。
+  cat > "${functions_dir}/sr.js" <<'SRJS'
+export async function onRequest(context) {
+  const url = new URL(context.request.url);
+  const ruleSetUrl = `${url.origin}/rules/shadowrocket-telegram.list`;
+  const moduleContent = `#!name=Telegram via PROXY
+#!homepage=https://github.com/blackmatrix7/ios_rule_script
+#!desc=Force Telegram traffic through the currently selected Shadowrocket proxy.
+[Rule]
+DOMAIN-SUFFIX,t.me,PROXY
+DOMAIN-SUFFIX,telegram.me,PROXY
+DOMAIN-SUFFIX,telegram.org,PROXY
+DOMAIN-SUFFIX,telegram.dog,PROXY
+DOMAIN-SUFFIX,telegram-cdn.org,PROXY
+DOMAIN-SUFFIX,cdn-telegram.org,PROXY
+IP-CIDR,5.28.192.0/18,PROXY,no-resolve
+IP-CIDR,91.108.0.0/16,PROXY,no-resolve
+IP-CIDR,149.154.160.0/20,PROXY,no-resolve
+RULE-SET,${ruleSetUrl},PROXY
+`;
+
+  return new Response(moduleContent, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
+      'Profile-Title': 'Shadowrocket-Telegram',
+      'Profile-Update-Interval': '24',
+      'Content-Disposition': "attachment; filename=shadowrocket-telegram.module"
+    }
+  });
+}
+SRJS
 
   # 生成 c.js (Clash 订阅) - 完整双层结构配置
   cat > "${functions_dir}/c.js" <<'CJS'
@@ -2324,7 +2387,14 @@ GLOBALJS
   # 主页只公开订阅编号、到期日和独立链接，不包含 ISP 地址或凭据。
   jq -cn \
     --argjson entries "${ISP_PUBLIC_LIST_JSON}" \
-    '$entries | map({id, expires, v2: ("/v2?isp=" + .id), clash: ("/c?isp=" + .id)})' \
+    '$entries | map({
+      id,
+      expires,
+      v2: ("/v2?isp=" + .id),
+      clash: ("/c?isp=" + .id),
+      shadowrocket: ("/v2?isp=" + .id),
+      shadowrocket_module: "/sr"
+    })' \
     > "${pages_dir}/subscriptions.json"
   
   # 生成 _redirects（每次重建，确保隐藏路径始终最新）
@@ -2343,11 +2413,15 @@ GLOBALJS
 
 # Clash Verge 全局扩展脚本
 /s /global-extension.js 200
+
+# Shadowrocket Telegram 高优先级模块
+/sr /sr 200
 REDIRECTS
 
   chmod 0755 "${functions_dir}"
   chmod 0644 \
     "${functions_dir}/v2.js" \
+    "${functions_dir}/sr.js" \
     "${functions_dir}/c.js" \
     "${pages_dir}/global-extension.js" \
     "${pages_dir}/subscriptions.json" \
@@ -2370,6 +2444,7 @@ REDIRECTS
     log_info "订阅链接: https://${SUB_DOMAIN}/v2 (v2rayN)"
     log_info "订阅链接: https://${SUB_DOMAIN}/c (Clash)"
     log_info "全局扩展脚本: https://${SUB_DOMAIN}/s (Clash Verge)"
+    log_info "Telegram 模块: https://${SUB_DOMAIN}/sr (Shadowrocket)"
     
     # 验证订阅
     verify_subscription
