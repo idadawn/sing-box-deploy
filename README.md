@@ -237,7 +237,7 @@ Content-Disposition: attachment; filename=<编号>
 
 ### 首页可见性
 
-首页读取部署时生成的 `subscriptions.json`。该文件只包含编号、到期时间和订阅路径，不包含 ISP 地址、账号或密码。
+首页读取部署时生成的 `subscriptions.json`。该文件包含编号、ISP IP、到期时间和订阅路径，便于识别实际出口；不会包含 ISP 账号或密码。由于 IP 会在前端公开，不能把“隐藏首页编号”视为访问控制。
 
 `cloudflare-pages-sub/index.html` 中的 `homepageHiddenIds` 可以隐藏私用编号；当前默认隐藏 `own` 与 `dawn`。此设置只隐藏首页列表和详情，不会阻止 `/v2?isp=<编号>` 或 `/c?isp=<编号>` 访问。需要真正限制访问时，应在 Pages Functions 中增加令牌校验。
 
