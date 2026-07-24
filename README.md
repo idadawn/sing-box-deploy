@@ -239,7 +239,7 @@ Content-Disposition: attachment; filename=<编号>
 
 首页读取部署时生成的 `subscriptions.json`。该文件只包含编号、到期时间和订阅路径，不包含 ISP 地址、账号或密码。
 
-`cloudflare-pages-sub/index.html` 中的 `homepageHiddenIds` 可以隐藏私用编号。此设置只隐藏首页列表和详情，不会阻止 `/v2?isp=<编号>` 或 `/c?isp=<编号>` 访问。需要真正限制访问时，应在 Pages Functions 中增加令牌校验。
+`cloudflare-pages-sub/index.html` 中的 `homepageHiddenIds` 可以隐藏私用编号；当前默认隐藏 `own` 与 `dawn`。此设置只隐藏首页列表和详情，不会阻止 `/v2?isp=<编号>` 或 `/c?isp=<编号>` 访问。需要真正限制访问时，应在 Pages Functions 中增加令牌校验。
 
 访问首页时追加 `?all=1` 可临时显示包含隐藏编号在内的全部订阅，例如 `https://<SUB_DOMAIN>/?all=1`。该后缀是便捷入口，不是身份认证。
 
