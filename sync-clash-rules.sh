@@ -19,6 +19,7 @@ RULE_FILES=(
   cncidr.txt
   telegramcidr.txt
 )
+SHADOWROCKET_RULE_FILE="shadowrocket-telegram.list"
 
 DEPLOY=0
 FORCE=0
@@ -96,7 +97,7 @@ load_env_file() {
 
     key="$(trim "${line%%=*}")"
     case "${key}" in
-      CLASH_RULESET_UPSTREAM_REPO|CLASH_RULESET_UPSTREAM_BRANCH|CLASH_RULESET_RAW_BASE_URL|CF_API_TOKEN|CF_ACCOUNT_ID|CF_PAGES_PROJECT)
+      CLASH_RULESET_UPSTREAM_REPO|CLASH_RULESET_UPSTREAM_BRANCH|CLASH_RULESET_RAW_BASE_URL|SHADOWROCKET_TELEGRAM_REPO|SHADOWROCKET_TELEGRAM_BRANCH|SHADOWROCKET_TELEGRAM_RAW_BASE_URL|CF_API_TOKEN|CF_ACCOUNT_ID|CF_PAGES_PROJECT)
         ;;
       *)
         continue
@@ -136,6 +137,25 @@ validate_rule_file() {
   grep -Eq '^[[:space:]]*-[[:space:]]+[^[:space:]]' "${path}"
 }
 
+validate_shadowrocket_telegram_file() {
+  local path="$1"
+  [[ -s "${path}" ]] || return 1
+
+  local rule_count
+  rule_count="$(grep -Ec '^(DOMAIN|DOMAIN-SUFFIX|DOMAIN-KEYWORD|IP-CIDR|IP-CIDR6|IP-ASN),' "${path}" || true)"
+  (( rule_count >= 30 )) || return 1
+  awk '
+    NF && $1 !~ /^#/ &&
+    $0 !~ /^(DOMAIN|DOMAIN-SUFFIX|DOMAIN-KEYWORD|IP-CIDR|IP-CIDR6|IP-ASN),/ {
+      exit 1
+    }
+  ' "${path}" || return 1
+  grep -Fxq 'DOMAIN-SUFFIX,telegram.org' "${path}" || return 1
+  grep -Fxq 'IP-CIDR,5.28.192.0/18,no-resolve' "${path}" || return 1
+  grep -Fxq 'IP-CIDR,91.108.0.0/16,no-resolve' "${path}" || return 1
+  grep -Fxq 'IP-CIDR,149.154.160.0/20,no-resolve' "${path}"
+}
+
 validate_snapshot() {
   local directory="$1"
   local require_metadata="${2:-true}"
@@ -145,11 +165,14 @@ validate_snapshot() {
   for file in "${RULE_FILES[@]}"; do
     validate_rule_file "${directory}/${file}" || return 1
   done
+  validate_shadowrocket_telegram_file "${directory}/${SHADOWROCKET_RULE_FILE}" || return 1
 
   if [[ "${require_metadata}" == "true" ]]; then
     jq -e '
       (.upstream_sha | strings | test("^[0-9a-f]{40}$")) and
-      (.files | arrays | length == 10)
+      (.shadowrocket_telegram_sha | strings | test("^[0-9a-f]{40}$")) and
+      (.files | arrays | length == 11) and
+      (.files | index("shadowrocket-telegram.list") != null)
     ' "${directory}/metadata.json" >/dev/null 2>&1 || return 1
   fi
 }
@@ -157,50 +180,74 @@ validate_snapshot() {
 normalize_snapshot_permissions() {
   local directory="$1"
   chmod 0755 "${directory}"
-  chmod 0644 "${directory}"/*.txt "${directory}/metadata.json"
+  chmod 0644 "${directory}"/*.txt "${directory}"/*.list "${directory}/metadata.json"
 }
 
 resolve_raw_base_url() {
-  if [[ -n "${CLASH_RULESET_RAW_BASE_URL:-}" ]]; then
-    printf '%s' "${CLASH_RULESET_RAW_BASE_URL%/}"
+  local repository="$1"
+  local configured_base_url="${2:-}"
+  if [[ -n "${configured_base_url}" ]]; then
+    printf '%s' "${configured_base_url%/}"
     return 0
   fi
 
-  local repository_path="${CLASH_RULESET_UPSTREAM_REPO#https://github.com/}"
+  local repository_path="${repository#https://github.com/}"
   repository_path="${repository_path%.git}"
-  if [[ "${repository_path}" == "${CLASH_RULESET_UPSTREAM_REPO}" || "${repository_path}" != */* ]]; then
-    log_error "非 GitHub 仓库必须同时设置 CLASH_RULESET_RAW_BASE_URL"
+  if [[ "${repository_path}" == "${repository}" || "${repository_path}" != */* ]]; then
+    log_error "非 GitHub 仓库必须同时设置对应的 RAW_BASE_URL"
     return 1
   fi
   printf 'https://raw.githubusercontent.com/%s' "${repository_path}"
 }
 
 resolve_upstream_sha() {
-  local ref="refs/heads/${CLASH_RULESET_UPSTREAM_BRANCH}"
+  local repository="$1"
+  local branch="$2"
+  local ref="refs/heads/${branch}"
   local result
-  result="$(git ls-remote "${CLASH_RULESET_UPSTREAM_REPO}" "${ref}")"
+  result="$(git ls-remote "${repository}" "${ref}")"
   awk 'NR == 1 { print $1 }' <<< "${result}"
 }
 
 write_metadata() {
   local directory="$1"
   local upstream_sha="$2"
+  local shadowrocket_telegram_sha="$3"
   local files_json
-  files_json="$(printf '%s\n' "${RULE_FILES[@]}" | jq -R . | jq -s .)"
+  files_json="$(
+    {
+      printf '%s\n' "${RULE_FILES[@]}"
+      printf '%s\n' "${SHADOWROCKET_RULE_FILE}"
+    } | jq -R . | jq -s .
+  )"
 
   jq -n \
     --arg repository "${CLASH_RULESET_UPSTREAM_REPO}" \
     --arg branch "${CLASH_RULESET_UPSTREAM_BRANCH}" \
     --arg upstream_sha "${upstream_sha}" \
+    --arg shadowrocket_telegram_repository "${SHADOWROCKET_TELEGRAM_REPO}" \
+    --arg shadowrocket_telegram_branch "${SHADOWROCKET_TELEGRAM_BRANCH}" \
+    --arg shadowrocket_telegram_sha "${shadowrocket_telegram_sha}" \
     --arg synced_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
     --argjson files "${files_json}" \
-    '{repository: $repository, branch: $branch, upstream_sha: $upstream_sha, synced_at: $synced_at, files: $files}' \
+    '{
+      repository: $repository,
+      branch: $branch,
+      upstream_sha: $upstream_sha,
+      shadowrocket_telegram_repository: $shadowrocket_telegram_repository,
+      shadowrocket_telegram_branch: $shadowrocket_telegram_branch,
+      shadowrocket_telegram_sha: $shadowrocket_telegram_sha,
+      synced_at: $synced_at,
+      files: $files
+    }' \
     > "${directory}/metadata.json"
 }
 
 download_snapshot() {
   local upstream_sha="$1"
   local raw_base_url="$2"
+  local shadowrocket_telegram_sha="$3"
+  local shadowrocket_raw_base_url="$4"
   local output_parent
   output_parent="$(dirname "${CLASH_RULESET_OUTPUT_DIR}")"
   mkdir -p "${output_parent}"
@@ -221,11 +268,20 @@ download_snapshot() {
     fi
   done
 
+  local shadowrocket_url="${shadowrocket_raw_base_url}/${shadowrocket_telegram_sha}/rule/Shadowrocket/Telegram/Telegram.list"
+  log_info "下载 ${SHADOWROCKET_RULE_FILE}"
+  if ! curl --fail --silent --show-error --location \
+    --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 180 \
+    "${shadowrocket_url}" -o "${stage_dir}/${SHADOWROCKET_RULE_FILE}"; then
+    log_error "${SHADOWROCKET_RULE_FILE} 下载失败，保留当前规则快照"
+    return 1
+  fi
+
   validate_snapshot "${stage_dir}" false || {
     log_error "上游规则文件校验失败，保留当前快照"
     return 1
   }
-  write_metadata "${stage_dir}" "${upstream_sha}"
+  write_metadata "${stage_dir}" "${upstream_sha}" "${shadowrocket_telegram_sha}"
   validate_snapshot "${stage_dir}" true || {
     log_error "规则快照元数据校验失败，保留当前快照"
     return 1
@@ -278,6 +334,8 @@ main() {
   CLASH_RULESET_UPSTREAM_REPO="${CLASH_RULESET_UPSTREAM_REPO:-https://github.com/Loyalsoldier/clash-rules.git}"
   CLASH_RULESET_UPSTREAM_BRANCH="${CLASH_RULESET_UPSTREAM_BRANCH:-release}"
   CLASH_RULESET_OUTPUT_DIR="${CLASH_RULESET_OUTPUT_DIR:-${PAGES_DIR}/rules}"
+  SHADOWROCKET_TELEGRAM_REPO="${SHADOWROCKET_TELEGRAM_REPO:-https://github.com/blackmatrix7/ios_rule_script.git}"
+  SHADOWROCKET_TELEGRAM_BRANCH="${SHADOWROCKET_TELEGRAM_BRANCH:-master}"
   CF_PAGES_PROJECT="${CF_PAGES_PROJECT:-sub-converter}"
 
   require_commands
@@ -292,21 +350,35 @@ main() {
   fi
 
   local upstream_sha raw_base_url current_sha=""
-  upstream_sha="$(resolve_upstream_sha)"
+  local shadowrocket_telegram_sha shadowrocket_raw_base_url current_shadowrocket_sha=""
+  upstream_sha="$(resolve_upstream_sha "${CLASH_RULESET_UPSTREAM_REPO}" "${CLASH_RULESET_UPSTREAM_BRANCH}")"
   [[ "${upstream_sha}" =~ ^[0-9a-f]{40}$ ]] || {
     log_error "无法解析 ${CLASH_RULESET_UPSTREAM_BRANCH} 分支提交"
     exit 1
   }
-  raw_base_url="$(resolve_raw_base_url)"
+  shadowrocket_telegram_sha="$(resolve_upstream_sha "${SHADOWROCKET_TELEGRAM_REPO}" "${SHADOWROCKET_TELEGRAM_BRANCH}")"
+  [[ "${shadowrocket_telegram_sha}" =~ ^[0-9a-f]{40}$ ]] || {
+    log_error "无法解析 Shadowrocket Telegram ${SHADOWROCKET_TELEGRAM_BRANCH} 分支提交"
+    exit 1
+  }
+  raw_base_url="$(resolve_raw_base_url "${CLASH_RULESET_UPSTREAM_REPO}" "${CLASH_RULESET_RAW_BASE_URL:-}")"
+  shadowrocket_raw_base_url="$(resolve_raw_base_url "${SHADOWROCKET_TELEGRAM_REPO}" "${SHADOWROCKET_TELEGRAM_RAW_BASE_URL:-}")"
 
   if validate_snapshot "${CLASH_RULESET_OUTPUT_DIR}" true; then
     current_sha="$(jq -r '.upstream_sha' "${CLASH_RULESET_OUTPUT_DIR}/metadata.json")"
+    current_shadowrocket_sha="$(jq -r '.shadowrocket_telegram_sha' "${CLASH_RULESET_OUTPUT_DIR}/metadata.json")"
   fi
 
-  if (( FORCE == 1 )) || [[ "${current_sha}" != "${upstream_sha}" ]]; then
-    download_snapshot "${upstream_sha}" "${raw_base_url}"
+  if (( FORCE == 1 )) \
+    || [[ "${current_sha}" != "${upstream_sha}" ]] \
+    || [[ "${current_shadowrocket_sha}" != "${shadowrocket_telegram_sha}" ]]; then
+    download_snapshot \
+      "${upstream_sha}" \
+      "${raw_base_url}" \
+      "${shadowrocket_telegram_sha}" \
+      "${shadowrocket_raw_base_url}"
   else
-    log_ok "规则已是最新提交 ${upstream_sha}"
+    log_ok "规则已是最新提交 ${upstream_sha} / ${shadowrocket_telegram_sha}"
   fi
   normalize_snapshot_permissions "${CLASH_RULESET_OUTPUT_DIR}"
 
@@ -315,4 +387,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

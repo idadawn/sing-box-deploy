@@ -84,8 +84,10 @@ Pages assets under `cloudflare-pages-sub/functions/`, `subscriptions.json`, `glo
 - `/v2` and `/v2?isp=<id>`: Base64 v2rayN/v2rayNG subscriptions
 - `/c` and `/c?isp=<id>`: Clash/Mihomo YAML
 - `/s`: Clash Verge/Mihomo global extension
+- `/sr`: credential-free Shadowrocket module forcing Telegram rules to `PROXY`
 
 Single-ISP responses expose a stable profile name through `Profile-Title` and `Content-Disposition`, with a 24-hour profile update interval.
+The Shadowrocket node subscription remains `/v2?isp=<id>`; `/sr` is an additional high-priority rule module, not a node subscription.
 
 ## Validation expectations
 

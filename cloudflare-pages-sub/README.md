@@ -2,7 +2,7 @@
 
 这个目录将 v2rayN、Clash 订阅和 Clash Verge 全局扩展脚本托管在 Cloudflare Pages 上。相关文件由根目录的 `install.sh` 动态生成并部署，无需手动编辑。
 
-- `Clash` 与 `v2rayN / v2rayNG` 订阅由私有 ISP 清单动态生成
+- `Clash`、`v2rayN / v2rayNG` 与 Shadowrocket 节点订阅由私有 ISP 清单动态生成
 - `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
 - 主页从部署时生成的 `subscriptions.json` 读取独立订阅和到期日；`homepageHiddenIds` 可隐藏私用编号，追加 `?all=1` 可显示全部编号（都不构成访问控制）
 - 单 ISP 订阅同时返回 `Profile-Title: <编号>`、`Profile-Update-Interval: 24` 与无引号、无扩展名的 `filename=<编号>`/`filename*`，兼容采用不同响应头命名的客户端
@@ -13,6 +13,7 @@
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
 - 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 TX 大流量`，服务端显式使用 T 公网出口
 - 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
+- `/sr` 提供不含凭据的 Shadowrocket Telegram 高优先级模块，引用每日同步的 blackmatrix7 专用规则镜像
 
 ## 订阅链接
 
@@ -21,10 +22,12 @@
 - **v2rayN**: `https://<SUB_DOMAIN>/v2`
 - **Clash**: `https://<SUB_DOMAIN>/c`
 - **Clash Verge 全局扩展脚本**: `https://<SUB_DOMAIN>/s`
+- **Shadowrocket Telegram 模块**: `https://<SUB_DOMAIN>/sr`
 
 其中 `SUB_DOMAIN` 在根目录 `.env` 中配置。
 
 > `/v2`、`/c` 和 `/s` 包含节点凭据。随机路径或首页隐藏不能替代鉴权，订阅地址应按敏感信息管理。
+> `/sr` 只包含 Telegram 分流规则，不包含节点凭据。
 
 ## 目录结构
 
@@ -32,7 +35,8 @@
 cloudflare-pages-sub/
 ├── functions/           # Cloudflare Pages Functions（由 install.sh 生成）
 │   ├── v2.js            # v2rayN 订阅接口 (/v2)
-│   └── c.js             # Clash 订阅接口 (/c)
+│   ├── c.js             # Clash 订阅接口 (/c)
+│   └── sr.js            # Shadowrocket Telegram 模块 (/sr)
 ├── _redirects           # 重定向规则（由 install.sh 生成）
 ├── global-extension.js  # 任意机场的全局扩展脚本（由 install.sh 生成）
 ├── subscriptions.json   # 主页公开订阅清单（由 install.sh 生成，不含凭据）
@@ -80,6 +84,13 @@ wrangler pages deploy . --project-name="${CF_PAGES_PROJECT:-sub-converter}" --br
 1. 订阅 → 订阅设置 → 添加
 2. URL 填写 `https://<SUB_DOMAIN>/v2`
 3. 更新订阅
+
+### Shadowrocket
+
+1. 以 `Subscribe` 类型添加 `https://<SUB_DOMAIN>/v2?isp=<编号>`
+2. 选择导入的 T 节点
+3. 在“配置 → 模块”添加并启用 `https://<SUB_DOMAIN>/sr`
+4. 使用配置路由模式，重启 Telegram 后测试
 
 ### Clash Verge / Mihomo
 
