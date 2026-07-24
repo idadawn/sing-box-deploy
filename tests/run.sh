@@ -105,6 +105,8 @@ NODE
 fi
 
 grep -Fq 'shadowrocket_module: "/sr"' "${ROOT_DIR}/install.sh"
+grep -Fq 'ISP_PUBLIC_LIST_JSON=$(jq -c '\''map({id, host, expires, trojan_port, hysteria_port})'\''' "${ROOT_DIR}/install.sh"
+grep -Fq 'elements.host.textContent = entry.host' "${ROOT_DIR}/cloudflare-pages-sub/index.html"
 grep -Fq 'DEFAULT_TELEGRAM_IP_CIDRS="5.28.192.0/18,91.105.192.0/23,91.108.0.0/16' "${ROOT_DIR}/install.sh"
 grep -Fq 'shadowrocket-telegram.list' "${ROOT_DIR}/sync-clash-rules.sh"
 grep -Fq "const homepageHiddenIds = new Set(['own', 'dawn']);" "${ROOT_DIR}/cloudflare-pages-sub/index.html"

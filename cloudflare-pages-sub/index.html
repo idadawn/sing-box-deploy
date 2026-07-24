@@ -232,6 +232,13 @@
       text-transform: uppercase;
     }
 
+    .selected-host {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+    }
+
     .details-head h2 {
       margin: 0;
       font-size: 29px;
@@ -534,6 +541,7 @@
           <div>
             <p class="eyebrow">当前出口</p>
             <h2 id="selectedName">请选择节点</h2>
+            <p id="selectedHost" class="selected-host">等待选择 IP</p>
           </div>
           <div class="status-group">
             <span class="status">可用</span>
@@ -633,6 +641,7 @@
       list: document.getElementById('nodeList'),
       count: document.getElementById('nodeCount'),
       name: document.getElementById('selectedName'),
+      host: document.getElementById('selectedHost'),
       expiry: document.getElementById('selectedExpiry'),
       v2Url: document.getElementById('v2Url'),
       clashUrl: document.getElementById('clashUrl'),
@@ -664,6 +673,7 @@
       const shadowrocketModuleUrl = absoluteUrl(entry.shadowrocket_module || '/sr');
 
       elements.name.textContent = entry.id;
+      elements.host.textContent = entry.host || 'IP 未提供';
       elements.expiry.textContent = `到期 ${entry.expires}`;
       elements.v2Url.value = v2Url;
       elements.clashUrl.value = clashUrl;
@@ -708,7 +718,7 @@
 
       const expiry = document.createElement('span');
       expiry.className = 'node-expiry';
-      expiry.textContent = `到期 ${entry.expires}`;
+      expiry.textContent = `${entry.host || 'IP 未提供'} · 到期 ${entry.expires}`;
 
       const arrow = document.createElement('span');
       arrow.className = 'node-arrow';

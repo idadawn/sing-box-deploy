@@ -523,7 +523,7 @@ build_isp_json() {
       --argjson hysteria_port "${ISP_HYSTERIA_PORTS[index]}" \
       '$current + [{id: $id, host: $host, http_port: $http_port, socks_port: $socks_port, username: $username, password: $password, expires: $expires, trojan_port: $trojan_port, hysteria_port: $hysteria_port}]')
   done
-  ISP_PUBLIC_LIST_JSON=$(jq -c 'map({id, expires, trojan_port, hysteria_port})' <<< "${ISP_LIST_JSON}")
+  ISP_PUBLIC_LIST_JSON=$(jq -c 'map({id, host, expires, trojan_port, hysteria_port})' <<< "${ISP_LIST_JSON}")
 }
 
 validate_config() {
@@ -2384,11 +2384,12 @@ GLOBALJS
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${pages_dir}/global-extension.js"
 
-  # 主页只公开订阅编号、到期日和独立链接，不包含 ISP 地址或凭据。
+  # 主页公开订阅编号、ISP 地址、到期日和独立链接，不包含 ISP 账号或密码。
   jq -cn \
     --argjson entries "${ISP_PUBLIC_LIST_JSON}" \
     '$entries | map({
       id,
+      host,
       expires,
       v2: ("/v2?isp=" + .id),
       clash: ("/c?isp=" + .id),
