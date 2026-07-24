@@ -5,6 +5,7 @@ isp-list.tsv
 # ── Cloudflare Pages 生成文件（由 install.sh 动态生成）────
 cloudflare-pages-sub/functions/v2.js
 cloudflare-pages-sub/functions/c.js
+cloudflare-pages-sub/functions/sr.js
 cloudflare-pages-sub/_redirects
 cloudflare-pages-sub/global-extension.js
 cloudflare-pages-sub/subscriptions.json
