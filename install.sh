@@ -1439,19 +1439,23 @@ verify_subscription() {
     # 基础入口通过后，逐个验证私有 ISP 订阅只包含对应节点。
     if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $rules_ok -eq 1 ]]; then
       local personal_ok=1
-      local index id personal_v2 personal_c personal_c_headers personal_c_profile personal_c_filename
+      local index id personal_v2 personal_c personal_c_headers
+      local personal_c_profile personal_c_update_interval personal_c_filename personal_c_filename_expected
       for ((index = 0; index < ISP_COUNT; index++)); do
         id="${ISP_IDS[index]}"
         personal_v2=$(curl -sL --max-time 10 "https://${domain}/v2?isp=${id}&${verification_query}" 2>/dev/null | base64 -d 2>/dev/null)
         personal_c=$(curl -sL --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null)
         personal_c_headers=$(curl -sL -D - -o /dev/null --max-time 10 "https://${domain}/c?isp=${id}&${verification_query}" 2>/dev/null | tr -d '\r')
         personal_c_profile=$(awk -F': *' 'tolower($1) == "profile-title" {print $2; exit}' <<< "${personal_c_headers}")
+        personal_c_update_interval=$(awk -F': *' 'tolower($1) == "profile-update-interval" {print $2; exit}' <<< "${personal_c_headers}")
         personal_c_filename=$(awk -F': *' 'tolower($1) == "content-disposition" {print $2; exit}' <<< "${personal_c_headers}")
+        personal_c_filename_expected="attachment; filename=${id}; filename*=UTF-8''${id}"
         if [[ "$(grep -c "#T-${id}-" <<< "${personal_v2}" || true)" -ne 2 ]] \
           || ! grep -Fq "name: \"T-${id}-TJ\"" <<< "${personal_c}" \
           || ! grep -Fq "name: \"T-${id}-HY2\"" <<< "${personal_c}" \
           || [[ "${personal_c_profile}" != "${id}" ]] \
-          || [[ "${personal_c_filename}" != "attachment; filename=${id}" ]]; then
+          || [[ "${personal_c_update_interval}" != "24" ]] \
+          || [[ "${personal_c_filename}" != "${personal_c_filename_expected}" ]]; then
           log_warn "ISP ${id} 独立订阅验证失败，重试..."
           personal_ok=0
           break
