@@ -6,6 +6,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
+file_mode() {
+  local path="$1"
+  if stat -c '%a' "${path}" >/dev/null 2>&1; then
+    stat -c '%a' "${path}"
+  else
+    stat -f '%Lp' "${path}"
+  fi
+}
+
 for script in install.sh manage.sh migrate.sh setup-ssh.sh sync-clash-rules.sh; do
   bash -n "${ROOT_DIR}/${script}"
 done
@@ -162,7 +171,7 @@ grep -Fxq 'ISP_LIST_FILE=isp-list.tsv' "${TARGET_DIR}/.env"
 cmp "${SOURCE_DIR}/private/custom.tsv" "${TARGET_DIR}/isp-list.tsv"
 [[ "$(find "${TARGET_DIR}" -maxdepth 1 -name '.env.bak.*' | wc -l | tr -d ' ')" == "1" ]]
 [[ "$(find "${TARGET_DIR}" -maxdepth 1 -name 'isp-list.tsv.bak.*' | wc -l | tr -d ' ')" == "1" ]]
-[[ "$(stat -f '%Lp' "${TARGET_DIR}/.env" 2>/dev/null || stat -c '%a' "${TARGET_DIR}/.env")" == "600" ]]
-[[ "$(stat -f '%Lp' "${TARGET_DIR}/isp-list.tsv" 2>/dev/null || stat -c '%a' "${TARGET_DIR}/isp-list.tsv")" == "600" ]]
+[[ "$(file_mode "${TARGET_DIR}/.env")" == "600" ]]
+[[ "$(file_mode "${TARGET_DIR}/isp-list.tsv")" == "600" ]]
 
 echo "All tests passed."
