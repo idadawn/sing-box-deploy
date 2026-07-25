@@ -10,6 +10,12 @@ for script in install.sh manage.sh migrate.sh setup-ssh.sh sync-clash-rules.sh; 
   bash -n "${ROOT_DIR}/${script}"
 done
 
+INSTALL_HELP="$("${ROOT_DIR}/install.sh" --help)"
+grep -Fq -- '--skip-egress-preflight' <<< "${INSTALL_HELP}"
+grep -Fq -- '--skip-pages' <<< "${INSTALL_HELP}"
+grep -Fq 'preflight_isp_egress' "${ROOT_DIR}/install.sh"
+grep -Fq 'LimitNOFILE=1048576' "${ROOT_DIR}/install.sh"
+
 extract_heredoc() {
   local start="$1"
   local end="$2"

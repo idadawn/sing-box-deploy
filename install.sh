@@ -27,6 +27,8 @@ NETWORK_TUNING_FILE="/etc/sysctl.d/99-sing-box-performance.conf"
 FORCE_REINSTALL=0
 SKIP_FIREWALL=0
 SKIP_NETWORK_TUNING=0
+SKIP_EGRESS_PREFLIGHT=0
+SKIP_PAGES=0
 NO_START=0
 VALIDATE_ONLY=0
 
@@ -116,6 +118,9 @@ usage() {
   --skip-firewall      跳过 UFW 配置
   --skip-network-tuning
                       跳过 Linux 网络参数优化
+  --skip-egress-preflight
+                      跳过 ISP SOCKS5 出口预检（仅限受控预发布）
+  --skip-pages        跳过 Cloudflare Pages 发布与规则同步定时器
   --no-start           仅部署配置，不启动/重启 sing-box
   --validate-only      只生成并校验临时配置，不修改系统
   -h, --help           显示帮助
@@ -148,6 +153,14 @@ parse_args() {
         ;;
       --skip-network-tuning)
         SKIP_NETWORK_TUNING=1
+        shift
+        ;;
+      --skip-egress-preflight)
+        SKIP_EGRESS_PREFLIGHT=1
+        shift
+        ;;
+      --skip-pages)
+        SKIP_PAGES=1
         shift
         ;;
       --no-start)
@@ -351,6 +364,9 @@ load_env() {
   ENABLE_BBR="${ENABLE_BBR:-true}"
   ENABLE_TCP_FAST_OPEN="${ENABLE_TCP_FAST_OPEN:-true}"
   UDP_BUFFER_BYTES="${UDP_BUFFER_BYTES:-16777216}"
+  ENABLE_EGRESS_PREFLIGHT="${ENABLE_EGRESS_PREFLIGHT:-true}"
+  EGRESS_PREFLIGHT_URL="${EGRESS_PREFLIGHT_URL:-https://api.ipify.org}"
+  EGRESS_PREFLIGHT_ATTEMPTS="${EGRESS_PREFLIGHT_ATTEMPTS:-2}"
 
   log_success ".env 已加载"
 }
@@ -598,6 +614,12 @@ validate_config() {
   validate_bool "ENABLE_NETWORK_TUNING" "${ENABLE_NETWORK_TUNING}"
   validate_bool "ENABLE_BBR" "${ENABLE_BBR}"
   validate_bool "ENABLE_TCP_FAST_OPEN" "${ENABLE_TCP_FAST_OPEN}"
+  validate_bool "ENABLE_EGRESS_PREFLIGHT" "${ENABLE_EGRESS_PREFLIGHT}"
+  validate_positive_int "EGRESS_PREFLIGHT_ATTEMPTS" "${EGRESS_PREFLIGHT_ATTEMPTS}"
+  [[ "${EGRESS_PREFLIGHT_URL}" =~ ^https:// ]] || {
+    log_error "EGRESS_PREFLIGHT_URL 必须使用 https://"
+    exit 1
+  }
   [[ "${LOG_LEVEL}" =~ ^(trace|debug|info|warn|error|fatal|panic)$ ]] || {
     log_error "LOG_LEVEL 非法，允许值: trace|debug|info|warn|error|fatal|panic"
     exit 1
@@ -612,6 +634,45 @@ install_dependencies() {
   apt-get update
   apt-get install -y curl git jq ca-certificates gnupg ufw
   log_success "基础依赖安装完成"
+}
+
+preflight_isp_egress() {
+  if (( SKIP_EGRESS_PREFLIGHT == 1 )); then
+    log_warn "按参数要求跳过 ISP 出口预检；不得据此执行 DNS 切换"
+    return
+  fi
+  if ! is_true "${ENABLE_EGRESS_PREFLIGHT}"; then
+    log_warn "ENABLE_EGRESS_PREFLIGHT=${ENABLE_EGRESS_PREFLIGHT}，跳过 ISP 出口预检"
+    return
+  fi
+
+  log_info "预检 ${ISP_COUNT} 个 ISP SOCKS5 出口..."
+  local index attempt ok
+  local failed=()
+  for ((index = 0; index < ISP_COUNT; index++)); do
+    ok=0
+    for ((attempt = 1; attempt <= EGRESS_PREFLIGHT_ATTEMPTS; attempt++)); do
+      if curl -fsS --max-time 20 \
+        --socks5-hostname "${ISP_HOSTS[index]}:${ISP_SOCKS_PORTS[index]}" \
+        --proxy-user "${ISP_USERS[index]}:${ISP_PASSWORDS[index]}" \
+        "${EGRESS_PREFLIGHT_URL}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+    done
+    if (( ok == 1 )); then
+      log_success "ISP ${ISP_IDS[index]} 出口预检通过"
+    else
+      failed+=("${ISP_IDS[index]}")
+      log_error "ISP ${ISP_IDS[index]} 出口预检失败"
+    fi
+  done
+
+  if (( ${#failed[@]} > 0 )); then
+    log_error "拒绝部署：以下 ISP 出口不可用: ${failed[*]}"
+    log_info "迁移场景请先在上游放行新服务器公网 IP；仅受控预发布可使用 --skip-egress-preflight"
+    exit 1
+  fi
 }
 
 install_singbox() {
@@ -917,6 +978,24 @@ deploy_config() {
   log_info "写入正式配置..."
   install -m 600 "${TMP_CONFIG}" "${CONFIG_PATH}"
   log_success "配置已写入: ${CONFIG_PATH}"
+}
+
+setup_systemd_override() {
+  local override_dir="/etc/systemd/system/sing-box.service.d"
+  local override_path="${override_dir}/20-sing-box-deploy.conf"
+  mkdir -p "${override_dir}"
+  cat > "${override_path}" <<'EOF'
+[Unit]
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Restart=on-failure
+RestartSec=3s
+LimitNOFILE=1048576
+EOF
+  chmod 644 "${override_path}"
+  log_success "sing-box systemd 自动恢复与文件句柄限制已配置"
 }
 
 apply_network_tuning() {
@@ -2478,6 +2557,7 @@ main() {
   require_root
   install_dependencies
   install_singbox
+  preflight_isp_egress
   prepare_dirs
   backup_existing_config
   generate_config
@@ -2485,14 +2565,19 @@ main() {
   deploy_config
   apply_network_tuning
   setup_firewall
+  setup_systemd_override
   restart_service
   setup_egress_monitor
   write_summary
   show_final_info
   
-  # 自动更新并部署 Cloudflare Pages 订阅配置
-  update_cloudflare_pages
-  setup_clash_rules_sync_timer
+  if (( SKIP_PAGES == 1 )); then
+    log_warn "按参数要求跳过 Cloudflare Pages 发布与规则同步定时器"
+  else
+    # 自动更新并部署 Cloudflare Pages 订阅配置
+    update_cloudflare_pages
+    setup_clash_rules_sync_timer
+  fi
 }
 
 main "$@"
