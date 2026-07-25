@@ -18,6 +18,9 @@
 - 支持出口健康检查、systemd 定时任务和可选 SMTP 告警。
 - 支持把敏感配置导出为加密迁移包，在新服务器安全恢复。
 
+硅谷 TX 的控制面、数据面、迁移门禁和回退设计见
+[硅谷服务器架构](docs/silicon-valley-architecture.md)。
+
 ## 架构
 
 ```text
@@ -163,6 +166,9 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | `ENABLE_BBR` | 内核支持时是否启用 TCP BBR 与 `fq` |
 | `ENABLE_TCP_FAST_OPEN` | 是否为 Trojan 入站和 ISP SOCKS5 出站启用 TCP Fast Open |
 | `UDP_BUFFER_BYTES` | Linux UDP 收发缓冲上限，默认 16 MiB |
+| `ENABLE_EGRESS_PREFLIGHT` | 部署前是否逐个验证 ISP SOCKS5 出口 |
+| `EGRESS_PREFLIGHT_URL` | 出口预检使用的 HTTPS 地址 |
+| `EGRESS_PREFLIGHT_ATTEMPTS` | 每个 ISP 的预检次数 |
 
 这里有两层不同的 BBR：`HYSTERIA_CC_MODE=bbr` 控制 Hysteria2/QUIC，不固定声明客户端带宽；`ENABLE_BBR=true` 控制 Linux TCP，主要帮助 Trojan 与到 ISP 的 TCP 链路。默认值适合个人线路和后续换机。只有准确知道稳定可用带宽并愿意调参时，才建议使用 `brutal`。
 
@@ -319,9 +325,15 @@ sudo ./install.sh
 sudo ./install.sh --force-reinstall
 sudo ./install.sh --skip-firewall
 sudo ./install.sh --skip-network-tuning
+sudo ./install.sh --skip-egress-preflight
+sudo ./install.sh --skip-pages
 sudo ./install.sh --no-start
 ./install.sh --validate-only
 ```
+
+`--skip-egress-preflight` 只用于受控预发布，不能作为 DNS 切换依据。
+`--skip-pages` 用于只部署 sing-box 数据面，不发布订阅、不迁移规则同步
+定时器，适合新旧服务器并行阶段。
 
 ## 更换接入服务器
 
