@@ -254,6 +254,102 @@ validate_direct_bulk_apps() {
   done < <(printf '%s\n' "${DIRECT_BULK_APPS:-}" | tr ',\t ' '\n')
 }
 
+normalize_ip_or_cidr() {
+  local value="$1"
+  local address prefix
+
+  if [[ "${value}" == */* ]]; then
+    [[ "${value}" != */*/* ]] || return 1
+    address="${value%/*}"
+    prefix="${value##*/}"
+    [[ -n "${prefix}" ]] || return 1
+  else
+    address="${value}"
+    prefix=""
+  fi
+
+  if [[ "${address}" == *:* ]]; then
+    [[ "${address}" =~ ^[0-9A-Fa-f:]+$ ]] || return 1
+    [[ "${address}" != *:::* ]] || return 1
+    prefix="${prefix:-128}"
+    [[ "${prefix}" =~ ^[0-9]+$ ]] || return 1
+    (( ${#prefix} <= 3 )) || return 1
+    (( 10#${prefix} <= 128 )) || return 1
+
+    local left right remainder group
+    local left_count=0
+    local right_count=0
+    local -a left_groups right_groups all_groups
+    if [[ "${address}" == *::* ]]; then
+      remainder="${address#*::}"
+      [[ "${remainder}" != *::* ]] || return 1
+      left="${address%%::*}"
+      right="${remainder}"
+      if [[ -n "${left}" ]]; then
+        IFS=':' read -r -a left_groups <<< "${left}"
+        left_count=${#left_groups[@]}
+        for group in "${left_groups[@]}"; do
+          [[ "${group}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+        done
+      fi
+      if [[ -n "${right}" ]]; then
+        IFS=':' read -r -a right_groups <<< "${right}"
+        right_count=${#right_groups[@]}
+        for group in "${right_groups[@]}"; do
+          [[ "${group}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+        done
+      fi
+      (( left_count + right_count < 8 )) || return 1
+    else
+      [[ "${address}" != :* && "${address}" != *: ]] || return 1
+      IFS=':' read -r -a all_groups <<< "${address}"
+      (( ${#all_groups[@]} == 8 )) || return 1
+      for group in "${all_groups[@]}"; do
+        [[ "${group}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+      done
+    fi
+    address="$(printf '%s' "${address}" | tr '[:upper:]' '[:lower:]')"
+    printf '%s/%s' "${address}" "$((10#${prefix}))"
+    return 0
+  fi
+
+  [[ "${address}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  prefix="${prefix:-32}"
+  [[ "${prefix}" =~ ^[0-9]+$ ]] || return 1
+  (( ${#prefix} <= 3 )) || return 1
+  (( 10#${prefix} <= 32 )) || return 1
+
+  local octet1 octet2 octet3 octet4 octet
+  IFS='.' read -r octet1 octet2 octet3 octet4 <<< "${address}"
+  for octet in "${octet1}" "${octet2}" "${octet3}" "${octet4}"; do
+    (( 10#${octet} <= 255 )) || return 1
+  done
+  printf '%d.%d.%d.%d/%d' \
+    "$((10#${octet1}))" "$((10#${octet2}))" \
+    "$((10#${octet3}))" "$((10#${octet4}))" "$((10#${prefix}))"
+}
+
+normalize_client_direct_ip_cidrs() {
+  local item normalized_item
+  local -a normalized=()
+  while IFS= read -r item; do
+    item="$(trim "${item}")"
+    [[ -z "${item}" ]] && continue
+    if ! normalized_item="$(normalize_ip_or_cidr "${item}")"; then
+      log_error "CLIENT_DIRECT_IP_CIDRS 包含非法 IP/CIDR: ${item}"
+      return 1
+    fi
+    normalized+=("${normalized_item}")
+  done < <(printf '%s\n' "${CLIENT_DIRECT_IP_CIDRS:-}" | tr ',\t ' '\n')
+
+  if (( ${#normalized[@]} > 0 )); then
+    CLIENT_DIRECT_IP_CIDRS="$(IFS=,; printf '%s' "${normalized[*]}")"
+  else
+    CLIENT_DIRECT_IP_CIDRS=""
+  fi
+  export CLIENT_DIRECT_IP_CIDRS
+}
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     log_error "请使用 root 运行此脚本"
@@ -343,6 +439,7 @@ load_env() {
   DIRECT_BULK_DOMAINS="${DIRECT_BULK_DOMAINS:-${DEFAULT_DIRECT_BULK_DOMAINS}}"
   DIRECT_BULK_APPS="${DIRECT_BULK_APPS:-}"
   DIRECT_BULK_IP_CIDRS="${DIRECT_BULK_IP_CIDRS:-}"
+  CLIENT_DIRECT_IP_CIDRS="${CLIENT_DIRECT_IP_CIDRS:-}"
   if csv_list_contains "${DIRECT_BULK_APPS}" "telegram"; then
     DIRECT_BULK_DOMAINS="$(append_csv_list "${DIRECT_BULK_DOMAINS}" "${DEFAULT_TELEGRAM_DOMAINS}")"
     DIRECT_BULK_IP_CIDRS="$(append_csv_list "${DIRECT_BULK_IP_CIDRS}" "${DEFAULT_TELEGRAM_IP_CIDRS}")"
@@ -589,6 +686,7 @@ validate_config() {
   validate_port "HYSTERIA_PORT" "${HYSTERIA_PORT}"
   validate_port "SSH_PORT" "${SSH_PORT}"
   validate_direct_bulk_apps
+  normalize_client_direct_ip_cidrs || exit 1
   load_isp_list
 
   validate_positive_int "HYSTERIA_UP_MBPS" "${HYSTERIA_UP_MBPS}"
@@ -1474,13 +1572,24 @@ verify_subscription() {
     if [[ $c_ok -eq 0 ]]; then
       c_content=$(curl -sL --max-time 10 "https://${domain}/c?${verification_query}" 2>/dev/null)
       local telegram_c_ok=1
+      local client_direct_c_ok=1
       if is_true "${DIRECT_BULK_ENABLED}" && csv_list_contains "${DIRECT_BULK_APPS}" "telegram" \
         && ! grep -Fq 'RULE-SET,loyalsoldier-telegramcidr,📦 TX 大流量,no-resolve' <<< "$c_content"; then
         telegram_c_ok=0
       fi
+      local client_direct_cidr
+      while IFS= read -r client_direct_cidr; do
+        client_direct_cidr="$(trim "${client_direct_cidr}")"
+        [[ -z "${client_direct_cidr}" ]] && continue
+        if ! grep -Fq "IP-CIDR,${client_direct_cidr},DIRECT,no-resolve" <<< "$c_content"; then
+          client_direct_c_ok=0
+          break
+        fi
+      done < <(printf '%s\n' "${CLIENT_DIRECT_IP_CIDRS}" | tr ',\t ' '\n')
       if grep -q "proxies:" <<< "$c_content" \
         && grep -Fq "${CLASH_RULESET_BASE_URL%/}/proxy.txt" <<< "$c_content" \
-        && (( telegram_c_ok == 1 )); then
+        && (( telegram_c_ok == 1 )) \
+        && (( client_direct_c_ok == 1 )); then
         local c_node_count=$(grep -c "name:" <<< "$c_content")
         log_success "Clash 订阅正常: 发现 ${c_node_count} 个节点"
         c_ok=1
@@ -1493,14 +1602,22 @@ verify_subscription() {
     if [[ $script_ok -eq 0 ]]; then
       script_content=$(curl -sL --max-time 10 "https://${domain}/s?${verification_query}" 2>/dev/null)
       local telegram_script_ok=1
+      local client_direct_script_ok=1
+      local expected_client_direct_json
+      expected_client_direct_json=$(jq -cn --arg cidrs "${CLIENT_DIRECT_IP_CIDRS}" '$cidrs | split(",") | map(select(length > 0)) | unique')
       if is_true "${DIRECT_BULK_ENABLED}" && csv_list_contains "${DIRECT_BULK_APPS}" "telegram" \
         && ! grep -Fq 'const DIRECT_BULK_APPS = ["telegram"]' <<< "$script_content"; then
         telegram_script_ok=0
       fi
+      if ! grep -Fq "const CLIENT_DIRECT_IP_CIDRS = ${expected_client_direct_json};" <<< "$script_content"; then
+        client_direct_script_ok=0
+      fi
       if grep -q "function main(config)" <<< "$script_content" \
         && grep -q '"dialer-proxy"' <<< "$script_content" \
         && grep -Fq "${CLASH_RULESET_BASE_URL%/}" <<< "$script_content" \
-        && (( telegram_script_ok == 1 )); then
+        && grep -Fq 'CLIENT_DIRECT_IP_CIDRS.map' <<< "$script_content" \
+        && (( telegram_script_ok == 1 )) \
+        && (( client_direct_script_ok == 1 )); then
         log_success "Clash Verge 全局扩展脚本正常"
         script_ok=1
       else
@@ -1814,6 +1931,7 @@ export async function onRequest(context) {
   const txBulkDomains = DIRECT_BULK_ENABLED_PLACEHOLDER
     ? decodeDomainList("DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER")
     : [];
+  const clientDirectIpCidrs = decodeDomainList("CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER");
   const directBulkApps = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
   const hysteriaUseBbr = HYSTERIA_USE_BBR_PLACEHOLDER;
   const telegramDirectEnabled = DIRECT_BULK_ENABLED_PLACEHOLDER
@@ -1868,6 +1986,9 @@ export async function onRequest(context) {
     .join('\n');
   const txBulkRuleLines = txBulkDomains
     .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},📦 TX 大流量'`)
+    .join('\n');
+  const clientDirectIpRuleLines = clientDirectIpCidrs
+    .map((cidr) => `    - 'IP-CIDR,${cidr},DIRECT,no-resolve'`)
     .join('\n');
 
   const config = `mixed-port: 7890
@@ -2119,11 +2240,12 @@ ${fallbackProxyLines}
 rules:
 ${aiRuleLines}
 ${txBulkRuleLines}
+${clientDirectIpRuleLines}
 
     # Apple NTP 优先直连：避免 UDP/123 时间同步请求被代理策略截走导致解析或连接超时
     - 'DOMAIN,time.apple.com,DIRECT'
 
-    # 本地/公司内网优先直连：避免浏览器系统代理把网关管理地址送入代理节点
+    # 本地/公司网络优先直连：避免浏览器系统代理把管理地址送入代理节点
     - 'IP-CIDR,192.168.1.0/24,DIRECT,no-resolve'
     - 'IP-CIDR,10.78.1.0/24,DIRECT,no-resolve'
 
@@ -2191,6 +2313,7 @@ const CUSTOM_GROUP_NAMES = new Set([
 const AI_ISP_DOMAINS = AI_ISP_DOMAINS_JSON_PLACEHOLDER;
 const TX_BULK_DOMAINS = DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER;
 const DIRECT_BULK_APPS = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
+const CLIENT_DIRECT_IP_CIDRS = CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER;
 const HYSTERIA_USE_BBR = HYSTERIA_USE_BBR_PLACEHOLDER;
 const TELEGRAM_DIRECT_ENABLED = DIRECT_BULK_APPS.includes("telegram");
 const IP_CHECK_DOMAINS = [
@@ -2376,6 +2499,7 @@ function main(config) {
     ...AI_ISP_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
     ...IP_CHECK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
     ...TX_BULK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${TX_GROUP_NAME}`),
+    ...CLIENT_DIRECT_IP_CIDRS.map((cidr) => `IP-CIDR,${cidr},DIRECT,no-resolve`),
     "RULE-SET,loyalsoldier-applications,DIRECT",
     "RULE-SET,loyalsoldier-private,DIRECT",
     "RULE-SET,loyalsoldier-reject,REJECT",
@@ -2413,14 +2537,18 @@ GLOBALJS
   local sub_remarks_lower=$(echo "${SUB_REMARKS:-US-ISP}" | tr '[:upper:]' '[:lower:]')
   local ai_isp_domains_base64
   local direct_bulk_domains_base64
+  local client_direct_ip_cidrs_base64
   local ai_isp_domains_json
   local direct_bulk_domains_json='[]'
   local direct_bulk_apps_json='[]'
+  local client_direct_ip_cidrs_json
   local direct_bulk_enabled_js=false
   local hy2_use_bbr_js=false
   ai_isp_domains_base64=$(printf '%s' "${AI_ISP_DOMAINS}" | base64 | tr -d '\n')
   direct_bulk_domains_base64=$(printf '%s' "${DIRECT_BULK_DOMAINS}" | base64 | tr -d '\n')
+  client_direct_ip_cidrs_base64=$(printf '%s' "${CLIENT_DIRECT_IP_CIDRS}" | base64 | tr -d '\n')
   ai_isp_domains_json=$(jq -cn --arg domains "${AI_ISP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
+  client_direct_ip_cidrs_json=$(jq -cn --arg cidrs "${CLIENT_DIRECT_IP_CIDRS}" '$cidrs | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   if is_true "${DIRECT_BULK_ENABLED}"; then
     direct_bulk_enabled_js=true
     direct_bulk_domains_json=$(jq -cn --arg domains "${DIRECT_BULK_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
@@ -2441,6 +2569,7 @@ GLOBALJS
   sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${HYSTERIA_OBFS_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|AI_ISP_DOMAINS_BASE64_PLACEHOLDER|${ai_isp_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER|${direct_bulk_domains_base64}|g" "${functions_dir}/c.js"
+  sed -i "s|CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER|${client_direct_ip_cidrs_base64}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_ENABLED_PLACEHOLDER|${direct_bulk_enabled_js}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_USE_BBR_PLACEHOLDER|${hy2_use_bbr_js}|g" "${functions_dir}/c.js"
@@ -2452,6 +2581,7 @@ GLOBALJS
   sed -i "s|AI_ISP_DOMAINS_JSON_PLACEHOLDER|${ai_isp_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|${direct_bulk_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER|${client_direct_ip_cidrs_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_USE_BBR_PLACEHOLDER|${hy2_use_bbr_js}|g" "${pages_dir}/global-extension.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${pages_dir}/global-extension.js"
   sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${pages_dir}/global-extension.js"
@@ -2580,4 +2710,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
