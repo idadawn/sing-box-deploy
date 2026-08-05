@@ -154,6 +154,7 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | `DIRECT_BULK_DOMAINS` | 自定义大流量直出域名 |
 | `DIRECT_BULK_APPS` | 可选大流量应用，当前支持 `telegram` |
 | `DIRECT_BULK_IP_CIDRS` | 自定义大流量直出目标 IP/CIDR |
+| `CLIENT_DIRECT_IP_CIDRS` | Clash/Mihomo 客户端需精确绕过代理的目标 IP/CIDR |
 
 ### 性能
 
@@ -248,6 +249,8 @@ Content-Disposition: attachment; filename=<编号>
 `cloudflare-pages-sub/index.html` 中的 `homepageHiddenIds` 可以隐藏私用编号；当前默认只隐藏 `dawn`。此设置只隐藏首页列表和详情，不会阻止 `/v2?isp=<编号>` 或 `/c?isp=<编号>` 访问。需要真正限制访问时，应在 Pages Functions 中增加令牌校验。
 
 访问首页时追加 `?all=1` 可临时显示包含隐藏编号在内的全部订阅，例如 `https://<SUB_DOMAIN>/?all=1`。该后缀是便捷入口，不是身份认证。
+
+`CLIENT_DIRECT_IP_CIDRS` 会同时注入 Clash/Mihomo 订阅和全局扩展脚本，并置于机场及通用规则之前。当业务系统使用公网格式的管理地址时，RFC1918、`lancidr` 和 `GEOIP,LAN` 都不会命中，应使用精确 `/32` 直连规则，避免放大到整个公网网段。
 
 ### Clash Verge 全局扩展脚本
 

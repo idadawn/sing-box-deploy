@@ -43,9 +43,11 @@ render_js_template() {
     -e 's|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|W3siaWQiOiJkZW1vIiwiZXhwaXJlcyI6IjIwOTktMTItMzEiLCJ0cm9qYW5fcG9ydCI6NDQzLCJoeXN0ZXJpYV9wb3J0Ijo4NDQzfV0=|g' \
     -e 's/AI_ISP_DOMAINS_BASE64_PLACEHOLDER//g' \
     -e 's/DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER//g' \
+    -e 's/CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER/MjAzLjAuMTEzLjQyLzMy/g' \
     -e 's/AI_ISP_DOMAINS_JSON_PLACEHOLDER/[]/g' \
     -e 's/DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER/[]/g' \
     -e 's/DIRECT_BULK_APPS_JSON_PLACEHOLDER/[]/g' \
+    -e 's|CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER|["203.0.113.42/32"]|g' \
     -e 's/DIRECT_BULK_ENABLED_PLACEHOLDER/false/g' \
     -e 's/HYSTERIA_USE_BBR_PLACEHOLDER/true/g' \
     -e 's/HYSTERIA_UP_PLACEHOLDER/100/g' \
@@ -67,8 +69,10 @@ if command -v node >/dev/null 2>&1; then
   node --check "${TMP_DIR}/sr.mjs"
   node --check "${TMP_DIR}/c.mjs"
   node --check "${TMP_DIR}/global.mjs"
-  node --input-type=module - "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/sr.mjs" <<'NODE'
+  node --input-type=module - "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/sr.mjs" "${TMP_DIR}/global.mjs" <<'NODE'
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
 const v2Module = await import(pathToFileURL(process.argv[2]));
@@ -100,6 +104,26 @@ assert.match(clashBody, /name: "📦 TX 大流量"\n    type: url-test/);
 assert.match(clashBody, /name: "🛡️ ISP 出口自动"\n    type: url-test/);
 assert.doesNotMatch(clashBody, /\n    up: "100 Mbps"/);
 assert.doesNotMatch(clashBody, /\n    down: "100 Mbps"/);
+const clientDirectRule = "IP-CIDR,203.0.113.42/32,DIRECT,no-resolve";
+const clashClientDirectRuleIndex = clashBody.indexOf(`- '${clientDirectRule}'`);
+assert.ok(clashClientDirectRuleIndex >= 0);
+assert.ok(clashClientDirectRuleIndex < clashBody.indexOf("- 'RULE-SET,loyalsoldier-applications,DIRECT'"));
+assert.ok(clashClientDirectRuleIndex < clashBody.indexOf("- 'MATCH,🐟 漏网之鱼'"));
+
+const globalScript = await readFile(process.argv[5], "utf8");
+const globalMain = vm.runInNewContext(`${globalScript}\nmain`, { atob });
+const globalConfig = globalMain({
+  proxies: [],
+  "proxy-groups": [],
+  "proxy-providers": {},
+  "rule-providers": {},
+  rules: ["DOMAIN-SUFFIX,airport.example,DIRECT", "MATCH,DIRECT"],
+});
+const globalClientDirectRuleIndex = globalConfig.rules.indexOf(clientDirectRule);
+assert.ok(globalClientDirectRuleIndex >= 0);
+assert.ok(globalClientDirectRuleIndex < globalConfig.rules.indexOf("DOMAIN-SUFFIX,airport.example,DIRECT"));
+assert.ok(globalClientDirectRuleIndex < globalConfig.rules.indexOf("RULE-SET,loyalsoldier-lancidr,DIRECT,no-resolve"));
+assert.ok(globalClientDirectRuleIndex < globalConfig.rules.indexOf("MATCH,🛡️ ISP 最终出口"));
 
 const shadowrocketResponse = await shadowrocketModule.onRequest({
   request: new Request("https://sub.example/sr"),
@@ -125,6 +149,31 @@ grep -Fq 'elements.host.textContent = entry.host' "${ROOT_DIR}/cloudflare-pages-
 grep -Fq 'DEFAULT_TELEGRAM_IP_CIDRS="5.28.192.0/18,91.105.192.0/23,91.108.0.0/16' "${ROOT_DIR}/install.sh"
 grep -Fq 'shadowrocket-telegram.list' "${ROOT_DIR}/sync-clash-rules.sh"
 grep -Fq "const homepageHiddenIds = new Set(['dawn']);" "${ROOT_DIR}/cloudflare-pages-sub/index.html"
+
+(
+  source "${ROOT_DIR}/install.sh"
+
+  CLIENT_DIRECT_IP_CIDRS=""
+  normalize_client_direct_ip_cidrs
+  [[ -z "${CLIENT_DIRECT_IP_CIDRS}" ]]
+
+  CLIENT_DIRECT_IP_CIDRS="203.0.113.42,10.0.0.0/8,2001:DB8::1,2001:db8::/48"
+  normalize_client_direct_ip_cidrs
+  [[ "${CLIENT_DIRECT_IP_CIDRS}" == "203.0.113.42/32,10.0.0.0/8,2001:db8::1/128,2001:db8::/48" ]]
+
+  for invalid in \
+    "999.0.0.1/32" \
+    "203.0.113.42/33" \
+    "203.0.113.42/" \
+    "2001:db8::1/129" \
+    "2001:db8::1::2/128" \
+    "203.0.113.42/32,MATCH,DIRECT"; do
+    if CLIENT_DIRECT_IP_CIDRS="${invalid}" normalize_client_direct_ip_cidrs 2>/dev/null; then
+      echo "Expected CLIENT_DIRECT_IP_CIDRS validation failure: ${invalid}" >&2
+      exit 1
+    fi
+  done
+)
 
 SHADOWROCKET_RULE_FIXTURE="${TMP_DIR}/shadowrocket-telegram.list"
 printf '%s\n' \
