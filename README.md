@@ -14,7 +14,7 @@
 - ISP 地址、账号和密码只保存在服务器本地私有 TSV 文件中。
 - 自动生成 v2rayN/v2rayNG、Clash/Mihomo 与 Shadowrocket 入口，并发布到 Cloudflare Pages。
 - 默认使用 Hysteria2 自适应拥塞控制，并优化 Linux UDP 缓冲、TCP BBR/fq 与 TCP Fast Open。
-- Clash/Mihomo 默认使用 Trojan/TCP 优先的故障转移组；Hysteria2 保留为备用或手动选择，不再让延迟型 `url-test` 决定默认路径。
+- Clash/Mihomo 交互流量默认使用 Hysteria2 优先的故障转移组，TX/下载流量仍优先 Trojan/TCP；不让延迟型 `url-test` 决定默认路径。
 - GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，使浏览器在高丢包链路上直接回落到 HTTP/2/TCP。
 - 自动同步并校验 Clash 规则快照，失败时继续使用上一版。
 - 支持出口健康检查、systemd 定时任务和可选 SMTP 告警。
@@ -413,7 +413,7 @@ ufw status numbered
 
 ### GitHub、Google 或 X 首包慢、下载卡住
 
-先在 Clash/Mihomo 中把 `🚀 节点选择` 固定为 `🛡️ 自动容灾` 或 `T-<编号>-TJ`。默认订阅会阻止这些站点使用 UDP/443，从而避免浏览器等待 HTTP/3 超时后才回落。
+先在 Clash/Mihomo 中把 `🚀 节点选择` 固定为 `🛡️ 自动容灾`。直连 `/c` 订阅的交互故障转移组优先 Hysteria2，`TX 大流量` 组则优先 Trojan；如果当前网络限制 UDP，可手动固定 `T-<编号>-TJ`。默认订阅会阻止这些站点使用 UDP/443，从而避免浏览器等待 HTTP/3 超时后才回落。
 
 如果 Trojan 明显正常而 Hysteria2 仍然慢，检查客户端到 T 的 RTT、丢包和 UDP 限速。Clash Verge Rev 的 gVisor TUN 若使用默认 MTU 9000，可在本机合并配置中依次测试 `1400`、`1380`；选择稳定工作的最高值，不要直接修改服务器物理网卡 MTU。
 

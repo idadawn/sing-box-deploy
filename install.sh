@@ -2117,8 +2117,10 @@ export async function onRequest(context) {
     return new Response('ISP subscription not found or expired', { status: 410 });
   }
 
-  const proxyNames = entries.flatMap((entry) => [`T-${entry.id}-TJ`, `T-${entry.id}-HY2`]);
-  const txProxyNames = proxyNames;
+  // Prefer HY2 for interactive traffic on lossy/high-RTT access links, while
+  // keeping Trojan first for sustained downloads where TCP delivers more throughput.
+  const proxyNames = entries.flatMap((entry) => [`T-${entry.id}-HY2`, `T-${entry.id}-TJ`]);
+  const txProxyNames = entries.flatMap((entry) => [`T-${entry.id}-TJ`, `T-${entry.id}-HY2`]);
   const ispOnlyProxyNames = proxyNames;
   const decodeDomainList = (encoded) => atob(encoded)
     .split(/[\s,]+/)
@@ -2427,6 +2429,7 @@ ${ispOnlySelectProxyLines}
   - name: "🍎 苹果服务"
     type: select
     proxies:
+      - DIRECT
       - "🚀 节点选择"
       - "♻️ 自动选择"
       - "🛡️ 自动容灾"

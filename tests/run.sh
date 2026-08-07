@@ -191,23 +191,46 @@ const allClashResponse = await clashModule.onRequest({
   request: new Request("https://sub.example/c"),
 });
 const allClashBody = await allClashResponse.text();
-const expectedFallbackNodes = ["T-demo-TJ", "T-demo-HY2", "T-backup-TJ", "T-backup-HY2"];
+const expectedInteractiveNodes = ["T-demo-HY2", "T-demo-TJ", "T-backup-HY2", "T-backup-TJ"];
+const expectedBulkNodes = ["T-demo-TJ", "T-demo-HY2", "T-backup-TJ", "T-backup-HY2"];
 function groupBlock(body, name) {
   const start = body.indexOf(`  - name: "${name}"`);
   assert.ok(start >= 0, `missing group ${name}`);
   const next = body.indexOf("\n\n  - name:", start + 1);
   return body.slice(start, next >= 0 ? next : body.length);
 }
-for (const name of ["🛡️ 自动容灾", "♻️ 自动选择", "📦 TX 大流量", "🛡️ ISP 出口自动", "🤖 AI 自动"]) {
+for (const name of ["🛡️ 自动容灾", "♻️ 自动选择", "🛡️ ISP 出口自动", "🤖 AI 自动"]) {
   const block = groupBlock(allClashBody, name);
   assert.match(block, /type: fallback/);
   assert.doesNotMatch(block, /tolerance:/);
   let previous = -1;
-  for (const node of expectedFallbackNodes) {
+  for (const node of expectedInteractiveNodes) {
     const current = block.indexOf(`- "${node}"`);
     assert.ok(current > previous, `${name} proxy order for ${node}`);
     previous = current;
   }
+}
+const bulkBlock = groupBlock(allClashBody, "📦 TX 大流量");
+assert.match(bulkBlock, /type: fallback/);
+assert.doesNotMatch(bulkBlock, /tolerance:/);
+let previousBulkNode = -1;
+for (const node of expectedBulkNodes) {
+  const current = bulkBlock.indexOf(`- "${node}"`);
+  assert.ok(current > previousBulkNode, `📦 TX 大流量 proxy order for ${node}`);
+  previousBulkNode = current;
+}
+const appleBlock = groupBlock(allClashBody, "🍎 苹果服务");
+const appleDirectIndex = appleBlock.indexOf("- DIRECT");
+const appleProxyIndex = appleBlock.indexOf('- "🚀 节点选择"');
+assert.ok(appleDirectIndex >= 0);
+assert.ok(appleProxyIndex > appleDirectIndex);
+for (const domain of ["github.com", "google.com", "x.com"]) {
+  assert.ok(
+    allClashBody.includes(
+      `AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,${domain})),REJECT`,
+    ),
+    `missing force-TCP rule for ${domain}`,
+  );
 }
 const disabledClashResponse = await clashDisabledModule.onRequest({
   request: new Request("https://sub.example/c"),
@@ -237,8 +260,8 @@ assert.ok(globalClientDirectRuleIndex < globalConfig.rules.indexOf("RULE-SET,loy
 assert.ok(globalClientDirectRuleIndex < globalConfig.rules.indexOf("MATCH,🛡️ ISP 最终出口"));
 assert.equal(globalConfig["proxy-groups"][0].type, "fallback");
 assert.equal(globalConfig["proxy-groups"][1].type, "fallback");
-assert.deepEqual(plain(globalConfig["proxy-groups"][0].proxies), expectedFallbackNodes);
-assert.deepEqual(plain(globalConfig["proxy-groups"][1].proxies), expectedFallbackNodes);
+assert.deepEqual(plain(globalConfig["proxy-groups"][0].proxies), expectedBulkNodes);
+assert.deepEqual(plain(globalConfig["proxy-groups"][1].proxies), expectedBulkNodes);
 assert.equal(globalConfig.dns.enable, true);
 assert.deepEqual(plain(globalConfig.dns.nameserver), ["https://resolver.example/dns-query"]);
 assert.equal(globalConfig.dns["respect-rules"], true);

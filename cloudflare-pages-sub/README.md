@@ -9,8 +9,9 @@
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - Hysteria2 默认不声明固定上下行带宽，由客户端和服务端使用自适应拥塞控制
-- 默认策略组使用 Trojan/TCP 优先的 `fallback`，Hysteria2 仅在 TCP 入口不可用时接管；`♻️ 自动选择` 名称仅为兼容已保存选择，同样使用该故障转移策略
-- GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，国外 DNS 经 TCP 优先组访问 DoH
+- 直连 `/c` 订阅的交互策略组使用 Hysteria2 优先的 `fallback`，`TX 大流量` 组仍优先 Trojan/TCP；`♻️ 自动选择` 名称仅为兼容已保存选择
+- Apple 策略组默认直连且保留手动代理选项；已保存的历史选择可能需要手动切回 `DIRECT`
+- GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，国外 DNS 经交互故障转移组访问 DoH
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
 - 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 TX 大流量`，服务端显式使用 T 公网出口
 - 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
