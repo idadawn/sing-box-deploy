@@ -9,7 +9,8 @@
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - Hysteria2 默认不声明固定上下行带宽，由客户端和服务端使用自适应拥塞控制
-- 自动策略组使用 `url-test` 延迟选择；手动节点选择和固定 ISP 语义保持不变
+- 默认策略组使用 Trojan/TCP 优先的 `fallback`，Hysteria2 仅在 TCP 入口不可用时接管；`♻️ 自动选择` 名称仅为兼容已保存选择，同样使用该故障转移策略
+- GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，国外 DNS 经 TCP 优先组访问 DoH
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
 - 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 TX 大流量`，服务端显式使用 T 公网出口
 - 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
@@ -98,6 +99,7 @@ wrangler pages deploy . --project-name="${CF_PAGES_PROJECT:-sub-converter}" --br
 2. 订阅 URL 填写 `https://<SUB_DOMAIN>/c`
 3. 下载并启用
 4. 使用带 `isp=<编号>` 的独立链接时，所有 ISP 流量都固定到该编号；大流量规则仍可使用 `📦 TX 大流量`
+5. `🚀 节点选择` 默认使用 `🛡️ 自动容灾`；仅在确认 UDP 链路稳定时再手动选择 Hysteria2
 
 ### Clash Verge + 第三方机场
 

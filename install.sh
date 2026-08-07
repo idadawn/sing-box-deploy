@@ -29,11 +29,13 @@ SKIP_FIREWALL=0
 SKIP_NETWORK_TUNING=0
 SKIP_EGRESS_PREFLIGHT=0
 SKIP_PAGES=0
+PAGES_ONLY=0
 NO_START=0
 VALIDATE_ONLY=0
 
 TMP_CONFIG=""
 BACKUP_CONFIG=""
+PAGES_STAGE_ROOT=""
 
 DEFAULT_AI_ISP_DOMAINS="openai.com,chatgpt.com,oaistatic.com,oaiusercontent.com,openai.azure.com,ai.com,openaiapi-site.azureedge.net"
 DEFAULT_AI_ISP_DOMAINS+=",anthropic.com,claude.ai,servd-anthropic-website.b-cdn.net"
@@ -58,6 +60,10 @@ DEFAULT_DIRECT_BULK_DOMAINS+=",steamcontent.com,steamstatic.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",huggingface.co,hf.co,huggingfaceusercontent.com,hf.space"
 DEFAULT_DIRECT_BULK_DOMAINS+=",1drv.com,1drv.ms,livefilestore.com,oneclient.sfx.ms,onedrive.com,onedrive.live.com,photos.live.com,skydrive.wns.windows.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",sharepoint.com,sharepointonline.com,spoprod-a.akamaihd.net,storage.live.com,storage.msn.com"
+
+DEFAULT_CLASH_FORCE_TCP_DOMAINS="github.com,githubassets.com,githubusercontent.com,release-assets.githubusercontent.com,codeload.github.com,ghcr.io"
+DEFAULT_CLASH_FORCE_TCP_DOMAINS+=",google.com,gstatic.com,googleapis.com,googleusercontent.com"
+DEFAULT_CLASH_FORCE_TCP_DOMAINS+=",x.com,twitter.com,twimg.com,t.co"
 
 DEFAULT_TELEGRAM_DOMAINS="api.imem.app,api.swiftgram.app,cdn-telegram.org,comments.app,contest.com,graph.org,legra.ph"
 DEFAULT_TELEGRAM_DOMAINS+=",mbrx.app,quiz.directory,stel.com,t.me,tdesktop.com,telega.one,telegra.ph"
@@ -95,6 +101,9 @@ cleanup() {
   if [[ -n "${TMP_CONFIG}" && -f "${TMP_CONFIG}" ]]; then
     rm -f "${TMP_CONFIG}"
   fi
+  if [[ -n "${PAGES_STAGE_ROOT}" && -d "${PAGES_STAGE_ROOT}" ]]; then
+    rm -rf -- "${PAGES_STAGE_ROOT}"
+  fi
 }
 trap cleanup EXIT
 
@@ -121,6 +130,7 @@ usage() {
   --skip-egress-preflight
                       跳过 ISP SOCKS5 出口预检（仅限受控预发布）
   --skip-pages        跳过 Cloudflare Pages 发布与规则同步定时器
+  --pages-only       只生成、发布并验证 Cloudflare Pages；不修改 sing-box、UFW 或系统网络
   --no-start           仅部署配置，不启动/重启 sing-box
   --validate-only      只生成并校验临时配置，不修改系统
   -h, --help           显示帮助
@@ -163,6 +173,10 @@ parse_args() {
         SKIP_PAGES=1
         shift
         ;;
+      --pages-only)
+        PAGES_ONLY=1
+        shift
+        ;;
       --no-start)
         NO_START=1
         shift
@@ -182,6 +196,14 @@ parse_args() {
         ;;
     esac
   done
+
+  if (( PAGES_ONLY == 1 )); then
+    if (( FORCE_REINSTALL == 1 || SKIP_FIREWALL == 1 || SKIP_NETWORK_TUNING == 1 \
+      || SKIP_EGRESS_PREFLIGHT == 1 || SKIP_PAGES == 1 || NO_START == 1 || VALIDATE_ONLY == 1 )); then
+      log_error "--pages-only 只能与 --env 一起使用，不能组合数据面或校验专用选项"
+      exit 1
+    fi
+  fi
 }
 
 # -----------------------------
@@ -216,12 +238,14 @@ validate_bool() {
 
 csv_list_contains() {
   local list="${1:-}"
-  local expected="${2,,}"
-  local item
+  local expected
+  expected="$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')"
+  local item item_lower
   while IFS= read -r item; do
     item="$(trim "${item}")"
     [[ -z "${item}" ]] && continue
-    [[ "${item,,}" == "${expected}" ]] && return 0
+    item_lower="$(printf '%s' "${item}" | tr '[:upper:]' '[:lower:]')"
+    [[ "${item_lower}" == "${expected}" ]] && return 0
   done < <(printf '%s\n' "${list}" | tr ',\t ' '\n')
   return 1
 }
@@ -236,6 +260,41 @@ append_csv_list() {
   else
     printf '%s,%s' "${current}" "${extra}"
   fi
+}
+
+normalize_domain_suffix_csv() {
+  local variable_name="$1"
+  local raw_value="${!variable_name:-}"
+  local normalized=""
+  local domain label
+
+  while IFS= read -r domain; do
+    domain="$(trim "${domain}")"
+    domain="$(printf '%s' "${domain}" | tr '[:upper:]' '[:lower:]')"
+    [[ -z "${domain}" ]] && continue
+
+    if (( ${#domain} > 253 )) || [[ "${domain}" != *.* || "${domain}" == *..* \
+      || ! "${domain}" =~ ^[a-z0-9.-]+$ ]]; then
+      log_error "${variable_name} 包含非法域名: ${domain}"
+      return 1
+    fi
+
+    local labels=()
+    IFS='.' read -r -a labels <<< "${domain}"
+    for label in "${labels[@]}"; do
+      if (( ${#label} < 1 || ${#label} > 63 )) \
+        || [[ ! "${label}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+        log_error "${variable_name} 包含非法域名: ${domain}"
+        return 1
+      fi
+    done
+
+    if ! csv_list_contains "${normalized}" "${domain}"; then
+      normalized="$(append_csv_list "${normalized}" "${domain}")"
+    fi
+  done < <(printf '%s\n' "${raw_value}" | tr ',\t ' '\n')
+
+  printf -v "${variable_name}" '%s' "${normalized}"
 }
 
 validate_direct_bulk_apps() {
@@ -440,6 +499,8 @@ load_env() {
   DIRECT_BULK_APPS="${DIRECT_BULK_APPS:-}"
   DIRECT_BULK_IP_CIDRS="${DIRECT_BULK_IP_CIDRS:-}"
   CLIENT_DIRECT_IP_CIDRS="${CLIENT_DIRECT_IP_CIDRS:-}"
+  CLASH_FORCE_TCP_ENABLED="${CLASH_FORCE_TCP_ENABLED:-true}"
+  CLASH_FORCE_TCP_DOMAINS="${CLASH_FORCE_TCP_DOMAINS:-${DEFAULT_CLASH_FORCE_TCP_DOMAINS}}"
   if csv_list_contains "${DIRECT_BULK_APPS}" "telegram"; then
     DIRECT_BULK_DOMAINS="$(append_csv_list "${DIRECT_BULK_DOMAINS}" "${DEFAULT_TELEGRAM_DOMAINS}")"
     DIRECT_BULK_IP_CIDRS="$(append_csv_list "${DIRECT_BULK_IP_CIDRS}" "${DEFAULT_TELEGRAM_IP_CIDRS}")"
@@ -713,6 +774,12 @@ validate_config() {
   validate_bool "ENABLE_BBR" "${ENABLE_BBR}"
   validate_bool "ENABLE_TCP_FAST_OPEN" "${ENABLE_TCP_FAST_OPEN}"
   validate_bool "ENABLE_EGRESS_PREFLIGHT" "${ENABLE_EGRESS_PREFLIGHT}"
+  validate_bool "CLASH_FORCE_TCP_ENABLED" "${CLASH_FORCE_TCP_ENABLED}"
+  normalize_domain_suffix_csv "CLASH_FORCE_TCP_DOMAINS" || exit 1
+  if is_true "${CLASH_FORCE_TCP_ENABLED}" && [[ -z "${CLASH_FORCE_TCP_DOMAINS}" ]]; then
+    log_error "CLASH_FORCE_TCP_ENABLED=true 时 CLASH_FORCE_TCP_DOMAINS 不能为空"
+    exit 1
+  fi
   validate_positive_int "EGRESS_PREFLIGHT_ATTEMPTS" "${EGRESS_PREFLIGHT_ATTEMPTS}"
   [[ "${EGRESS_PREFLIGHT_URL}" =~ ^https:// ]] || {
     log_error "EGRESS_PREFLIGHT_URL 必须使用 https://"
@@ -730,7 +797,7 @@ install_dependencies() {
   log_info "安装基础依赖..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y curl git jq ca-certificates gnupg ufw
+  apt-get install -y curl git jq ca-certificates gnupg ufw util-linux
   log_success "基础依赖安装完成"
 }
 
@@ -1573,6 +1640,7 @@ verify_subscription() {
       c_content=$(curl -sL --max-time 10 "https://${domain}/c?${verification_query}" 2>/dev/null)
       local telegram_c_ok=1
       local client_direct_c_ok=1
+      local tcp_stability_c_ok=1
       if is_true "${DIRECT_BULK_ENABLED}" && csv_list_contains "${DIRECT_BULK_APPS}" "telegram" \
         && ! grep -Fq 'RULE-SET,loyalsoldier-telegramcidr,📦 TX 大流量,no-resolve' <<< "$c_content"; then
         telegram_c_ok=0
@@ -1586,10 +1654,31 @@ verify_subscription() {
           break
         fi
       done < <(printf '%s\n' "${CLIENT_DIRECT_IP_CIDRS}" | tr ',\t ' '\n')
+      if [[ "$(grep -c '    type: fallback' <<< "${c_content}" || true)" -lt 5 ]] \
+        || grep -Fq '    type: url-test' <<< "${c_content}" \
+        || ! grep -Fq '  respect-rules: true' <<< "${c_content}" \
+        || ! grep -Fq '  mtu: 1400' <<< "${c_content}" \
+        || ! grep -Fq 'https://1.1.1.1/dns-query#🛡️ 自动容灾' <<< "${c_content}"; then
+        tcp_stability_c_ok=0
+      fi
+      if is_true "${CLASH_FORCE_TCP_ENABLED}"; then
+        local force_tcp_domain
+        while IFS= read -r force_tcp_domain; do
+          force_tcp_domain="$(trim "${force_tcp_domain}")"
+          [[ -z "${force_tcp_domain}" ]] && continue
+          if ! grep -Fq "AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,${force_tcp_domain})),REJECT" <<< "${c_content}"; then
+            tcp_stability_c_ok=0
+            break
+          fi
+        done < <(printf '%s\n' "${CLASH_FORCE_TCP_DOMAINS}" | tr ',\t ' '\n')
+      elif grep -Fq 'AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,' <<< "${c_content}"; then
+        tcp_stability_c_ok=0
+      fi
       if grep -q "proxies:" <<< "$c_content" \
         && grep -Fq "${CLASH_RULESET_BASE_URL%/}/proxy.txt" <<< "$c_content" \
         && (( telegram_c_ok == 1 )) \
-        && (( client_direct_c_ok == 1 )); then
+        && (( client_direct_c_ok == 1 )) \
+        && (( tcp_stability_c_ok == 1 )); then
         local c_node_count=$(grep -c "name:" <<< "$c_content")
         log_success "Clash 订阅正常: 发现 ${c_node_count} 个节点"
         c_ok=1
@@ -1603,8 +1692,15 @@ verify_subscription() {
       script_content=$(curl -sL --max-time 10 "https://${domain}/s?${verification_query}" 2>/dev/null)
       local telegram_script_ok=1
       local client_direct_script_ok=1
+      local tcp_stability_script_ok=1
       local expected_client_direct_json
-      expected_client_direct_json=$(jq -cn --arg cidrs "${CLIENT_DIRECT_IP_CIDRS}" '$cidrs | split(",") | map(select(length > 0)) | unique')
+      local expected_force_tcp_json
+      local expected_force_tcp_enabled=false
+      expected_client_direct_json=$(jq -cn --arg cidrs "${CLIENT_DIRECT_IP_CIDRS}" '$cidrs | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
+      expected_force_tcp_json=$(jq -cn --arg domains "${CLASH_FORCE_TCP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
+      if is_true "${CLASH_FORCE_TCP_ENABLED}"; then
+        expected_force_tcp_enabled=true
+      fi
       if is_true "${DIRECT_BULK_ENABLED}" && csv_list_contains "${DIRECT_BULK_APPS}" "telegram" \
         && ! grep -Fq 'const DIRECT_BULK_APPS = ["telegram"]' <<< "$script_content"; then
         telegram_script_ok=0
@@ -1612,12 +1708,21 @@ verify_subscription() {
       if ! grep -Fq "const CLIENT_DIRECT_IP_CIDRS = ${expected_client_direct_json};" <<< "$script_content"; then
         client_direct_script_ok=0
       fi
+      if ! grep -Fq 'type: "fallback"' <<< "${script_content}" \
+        || ! grep -Fq "const FORCE_TCP_DOMAINS = ${expected_force_tcp_json};" <<< "${script_content}" \
+        || ! grep -Fq "const FORCE_TCP_ENABLED = ${expected_force_tcp_enabled};" <<< "${script_content}" \
+        || ! grep -Fq '"respect-rules": true' <<< "${script_content}" \
+        || ! grep -Fq 'mtu: 1400' <<< "${script_content}" \
+        || ! grep -Fq 'FORCE_TCP_DOMAINS.map' <<< "${script_content}"; then
+        tcp_stability_script_ok=0
+      fi
       if grep -q "function main(config)" <<< "$script_content" \
         && grep -q '"dialer-proxy"' <<< "$script_content" \
         && grep -Fq "${CLASH_RULESET_BASE_URL%/}" <<< "$script_content" \
         && grep -Fq 'CLIENT_DIRECT_IP_CIDRS.map' <<< "$script_content" \
         && (( telegram_script_ok == 1 )) \
-        && (( client_direct_script_ok == 1 )); then
+        && (( client_direct_script_ok == 1 )) \
+        && (( tcp_stability_script_ok == 1 )); then
         log_success "Clash Verge 全局扩展脚本正常"
         script_ok=1
       else
@@ -1714,6 +1819,7 @@ verify_subscription() {
 }
 
 sync_clash_rules_snapshot() {
+  local output_dir="${1:-${SCRIPT_DIR}/cloudflare-pages-sub/rules}"
   local sync_script="${SCRIPT_DIR}/sync-clash-rules.sh"
   [[ -x "${sync_script}" ]] || {
     log_error "规则同步脚本不存在或不可执行: ${sync_script}"
@@ -1721,8 +1827,90 @@ sync_clash_rules_snapshot() {
   }
 
   log_info "同步 Loyalsoldier ${CLASH_RULESET_UPSTREAM_BRANCH} 规则快照..."
-  CLASH_RULESET_OUTPUT_DIR="${SCRIPT_DIR}/cloudflare-pages-sub/rules" \
+  CLASH_RULESET_LOCK_HELD_FD=8 \
+    CLASH_RULESET_OUTPUT_DIR="${output_dir}" \
     "${sync_script}" --env "${ENV_FILE}"
+}
+
+acquire_pages_deploy_lock() {
+  command -v flock >/dev/null 2>&1 || {
+    log_error "Pages 发布需要 flock 以避免与定时任务并发"
+    return 1
+  }
+
+  local default_lock_file="${TMPDIR:-/tmp}/sing-box-deploy-clash-rules.lock"
+  (( EUID == 0 )) && default_lock_file="/run/lock/sing-box-deploy-clash-rules.lock"
+  local lock_file="${CLASH_RULESET_LOCK_FILE:-${default_lock_file}}"
+  exec 8>"${lock_file}"
+  if ! flock -n 8; then
+    exec 8>&-
+    log_error "已有规则同步或 Pages 发布任务正在运行，请稍后重试"
+    return 1
+  fi
+}
+
+release_pages_deploy_lock() {
+  if [[ -e /proc/self/fd/8 ]]; then
+    flock -u 8 || true
+    exec 8>&-
+  fi
+}
+
+discard_pages_stage() {
+  if [[ -n "${PAGES_STAGE_ROOT}" && -d "${PAGES_STAGE_ROOT}" ]]; then
+    rm -rf -- "${PAGES_STAGE_ROOT}"
+  fi
+  PAGES_STAGE_ROOT=""
+}
+
+activate_staged_pages() {
+  local staged_pages_dir="$1"
+  local live_pages_dir="$2"
+  local previous_pages_dir="${PAGES_STAGE_ROOT}/previous-pages"
+
+  if ! mv "${live_pages_dir}" "${previous_pages_dir}"; then
+    log_error "无法备份当前 Pages 本地资产"
+    return 1
+  fi
+  if mv "${staged_pages_dir}" "${live_pages_dir}"; then
+    return 0
+  fi
+
+  log_error "无法激活已验证的 Pages 本地资产，开始恢复原目录"
+  if ! mv "${previous_pages_dir}" "${live_pages_dir}"; then
+    log_error "原 Pages 目录恢复失败，已保留恢复材料: ${PAGES_STAGE_ROOT}"
+    PAGES_STAGE_ROOT=""
+  fi
+  return 1
+}
+
+validate_generated_pages_assets() {
+  local pages_dir="$1"
+  local generated_js=(
+    "${pages_dir}/functions/v2.js"
+    "${pages_dir}/functions/sr.js"
+    "${pages_dir}/functions/c.js"
+    "${pages_dir}/global-extension.js"
+  )
+  local generated_file
+
+  command -v node >/dev/null 2>&1 || {
+    log_error "Pages 生成资产校验需要 node"
+    return 1
+  }
+  for generated_file in "${generated_js[@]}"; do
+    [[ -s "${generated_file}" ]] || {
+      log_error "Pages 生成资产缺失: ${generated_file}"
+      return 1
+    }
+    node --input-type=module --check < "${generated_file}" >/dev/null
+  done
+  if grep -ERq '[A-Z][A-Z0-9_]*_PLACEHOLDER' \
+    "${pages_dir}/functions" "${pages_dir}/global-extension.js"; then
+    log_error "Pages 生成资产仍包含未替换占位符"
+    return 1
+  fi
+  log_success "Pages 生成资产语法与占位符校验通过"
 }
 
 setup_clash_rules_sync_timer() {
@@ -1772,19 +1960,28 @@ update_cloudflare_pages() {
     return 0
   fi
 
-  local pages_dir="${SCRIPT_DIR}/cloudflare-pages-sub"
-  local functions_dir="${pages_dir}/functions"
+  local live_pages_dir="${SCRIPT_DIR}/cloudflare-pages-sub"
   
   # 检查目录是否存在
-  if [[ ! -d "$pages_dir" ]]; then
+  if [[ ! -d "$live_pages_dir" ]]; then
+    if (( PAGES_ONLY == 1 )); then
+      log_error "未找到 cloudflare-pages-sub 目录，无法执行 Pages-only 发布"
+      return 1
+    fi
     log_warn "未找到 cloudflare-pages-sub 目录，跳过自动部署"
     return 0
   fi
 
+  acquire_pages_deploy_lock
+  PAGES_STAGE_ROOT="$(mktemp -d "${SCRIPT_DIR}/.pages-stage.XXXXXX")"
+  chmod 0700 "${PAGES_STAGE_ROOT}"
+  local pages_dir="${PAGES_STAGE_ROOT}/cloudflare-pages-sub"
+  cp -a "${live_pages_dir}" "${pages_dir}"
+  local functions_dir="${pages_dir}/functions"
   log_info "开始更新 Cloudflare Pages 订阅配置..."
 
   # 客户端只读取完整镜像；同步失败时保留旧快照并停止本次 Pages 部署。
-  sync_clash_rules_snapshot
+  sync_clash_rules_snapshot "${pages_dir}/rules"
 
   # 确保 functions 目录存在
   mkdir -p "$functions_dir"
@@ -1932,6 +2129,8 @@ export async function onRequest(context) {
     ? decodeDomainList("DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER")
     : [];
   const clientDirectIpCidrs = decodeDomainList("CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER");
+  const forceTcpDomains = decodeDomainList("CLASH_FORCE_TCP_DOMAINS_BASE64_PLACEHOLDER");
+  const forceTcpEnabled = CLASH_FORCE_TCP_ENABLED_PLACEHOLDER;
   const directBulkApps = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
   const hysteriaUseBbr = HYSTERIA_USE_BBR_PLACEHOLDER;
   const telegramDirectEnabled = DIRECT_BULK_ENABLED_PLACEHOLDER
@@ -1971,7 +2170,7 @@ export async function onRequest(context) {
   const proxyGroupLines = proxyNames.map((name) => `      - "${name}"`).join('\n');
   const txProxyGroupLines = txProxyNames.map((name) => `      - "${name}"`).join('\n');
   const ispOnlyProxyGroupLines = ispOnlyProxyNames.map((name) => `      - "${name}"`).join('\n');
-  const selectProxyLines = [`      - "♻️ 自动选择"`, `      - "🛡️ 自动容灾"`, ...proxyNames.map((name) => `      - "${name}"`)].join('\n');
+  const selectProxyLines = [`      - "🛡️ 自动容灾"`, `      - "♻️ 自动选择"`, ...proxyNames.map((name) => `      - "${name}"`)].join('\n');
   const ispOnlySelectProxyLines = [`      - "🛡️ ISP 出口自动"`, ...ispOnlyProxyNames.map((name) => `      - "${name}"`)].join('\n');
   const fallbackProxyLines = ispOnlySelectProxyLines;
   const telegramProxyLines = [
@@ -1990,6 +2189,11 @@ export async function onRequest(context) {
   const clientDirectIpRuleLines = clientDirectIpCidrs
     .map((cidr) => `    - 'IP-CIDR,${cidr},DIRECT,no-resolve'`)
     .join('\n');
+  const forceTcpRuleLines = forceTcpEnabled
+    ? forceTcpDomains
+      .map((domain) => `    - 'AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,${domain})),REJECT'`)
+      .join('\n')
+    : '';
 
   const config = `mixed-port: 7890
 allow-lan: false
@@ -2003,6 +2207,9 @@ secret: "SECRET_PLACEHOLDER"
 profile:
   store-selected: true
   store-fake-ip: true
+
+tun:
+  mtu: 1400
 
 sniffer:
   enable: true
@@ -2028,6 +2235,7 @@ dns:
   cache-algorithm: arc
   use-hosts: true
   use-system-hosts: true
+  respect-rules: true
   fake-ip-range: 198.18.0.1/16
   fake-ip-filter:
     - "+.lan"
@@ -2051,11 +2259,11 @@ dns:
     - https://dns.alidns.com/dns-query
   nameserver-policy:
     "geosite:gfw":
-      - tls://1.1.1.1
-      - tls://8.8.4.4
+      - "https://1.1.1.1/dns-query#🛡️ 自动容灾"
+      - "https://8.8.8.8/dns-query#🛡️ 自动容灾"
   fallback:
-    - tls://1.1.1.1
-    - tls://8.8.4.4
+    - "https://1.1.1.1/dns-query#🛡️ 自动容灾"
+    - "https://8.8.8.8/dns-query#🛡️ 自动容灾"
   fallback-filter:
     geoip: true
     geoip-code: CN
@@ -2155,21 +2363,19 @@ ${proxyGroupLines}
     timeout: 3000
 
   - name: "♻️ 自动选择"
-    type: url-test
+    type: fallback
     proxies:
 ${proxyGroupLines}
     url: "https://cp.cloudflare.com/generate_204"
     interval: 300
-    tolerance: 50
     timeout: 3000
 
   - name: "📦 TX 大流量"
-    type: url-test
+    type: fallback
     proxies:
 ${txProxyGroupLines}
     url: "https://www.youtube.com/generate_204"
     interval: 300
-    tolerance: 100
     timeout: 3000
 
   - name: "🚀 节点选择"
@@ -2178,12 +2384,11 @@ ${txProxyGroupLines}
 ${selectProxyLines}
 
   - name: "🛡️ ISP 出口自动"
-    type: url-test
+    type: fallback
     proxies:
 ${ispOnlyProxyGroupLines}
     url: "https://cp.cloudflare.com/generate_204"
     interval: 300
-    tolerance: 50
     timeout: 3000
 
   - name: "🤖 AI 服务"
@@ -2194,12 +2399,11 @@ ${ispOnlyProxyGroupLines}
 ${ispOnlyProxyGroupLines}
 
   - name: "🤖 AI 自动"
-    type: url-test
+    type: fallback
     proxies:
 ${ispOnlyProxyGroupLines}
     url: "https://chat.openai.com/cdn-cgi/trace"
     interval: 300
-    tolerance: 75
     timeout: 5000
 
   - name: "📲 电报信息"
@@ -2238,9 +2442,10 @@ ${ispOnlySelectProxyLines}
 ${fallbackProxyLines}
 
 rules:
+${clientDirectIpRuleLines}
+${forceTcpRuleLines}
 ${aiRuleLines}
 ${txBulkRuleLines}
-${clientDirectIpRuleLines}
 
     # Apple NTP 优先直连：避免 UDP/123 时间同步请求被代理策略截走导致解析或连接超时
     - 'DOMAIN,time.apple.com,DIRECT'
@@ -2314,6 +2519,8 @@ const AI_ISP_DOMAINS = AI_ISP_DOMAINS_JSON_PLACEHOLDER;
 const TX_BULK_DOMAINS = DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER;
 const DIRECT_BULK_APPS = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
 const CLIENT_DIRECT_IP_CIDRS = CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER;
+const FORCE_TCP_DOMAINS = CLASH_FORCE_TCP_DOMAINS_JSON_PLACEHOLDER;
+const FORCE_TCP_ENABLED = CLASH_FORCE_TCP_ENABLED_PLACEHOLDER;
 const HYSTERIA_USE_BBR = HYSTERIA_USE_BBR_PLACEHOLDER;
 const TELEGRAM_DIRECT_ENABLED = DIRECT_BULK_APPS.includes("telegram");
 const IP_CHECK_DOMAINS = [
@@ -2435,6 +2642,12 @@ function main(config) {
   const sourceGroups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];
   const sourceRuleProviders = config["rule-providers"] || {};
   const sourceProxyProviders = config["proxy-providers"] || {};
+  const sourceDns = config.dns && typeof config.dns === "object" ? config.dns : {};
+  const sourceDnsPolicy = sourceDns["nameserver-policy"]
+    && typeof sourceDns["nameserver-policy"] === "object"
+    ? sourceDns["nameserver-policy"]
+    : {};
+  const sourceTun = config.tun && typeof config.tun === "object" ? config.tun : {};
 
   const airportProxies = sourceProxies.filter(
     (proxy) => proxy && proxy.name && !injectedNodeNames.has(proxy.name),
@@ -2470,20 +2683,18 @@ function main(config) {
   config["proxy-groups"] = [
     {
       name: FINAL_GROUP_NAME,
-      type: "url-test",
+      type: "fallback",
       proxies: finalNodeNames,
       url: "https://cp.cloudflare.com/generate_204",
       interval: 300,
-      tolerance: 50,
       timeout: 5000,
     },
     {
       name: TX_GROUP_NAME,
-      type: "url-test",
+      type: "fallback",
       proxies: txNodeNames,
       url: "https://www.youtube.com/generate_204",
       interval: 300,
-      tolerance: 100,
       timeout: 5000,
     },
     transitGroup,
@@ -2493,13 +2704,41 @@ function main(config) {
     ...sourceRuleProviders,
     ...loyalsoldierProviders,
   };
+  config.dns = {
+    ...sourceDns,
+    "respect-rules": true,
+    "proxy-server-nameserver": Array.isArray(sourceDns["proxy-server-nameserver"])
+      && sourceDns["proxy-server-nameserver"].length > 0
+      ? sourceDns["proxy-server-nameserver"]
+      : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"],
+    "nameserver-policy": {
+      ...sourceDnsPolicy,
+      "geosite:gfw": [
+        `https://1.1.1.1/dns-query#${FINAL_GROUP_NAME}`,
+        `https://8.8.8.8/dns-query#${FINAL_GROUP_NAME}`,
+      ],
+    },
+    fallback: [
+      `https://1.1.1.1/dns-query#${FINAL_GROUP_NAME}`,
+      `https://8.8.8.8/dns-query#${FINAL_GROUP_NAME}`,
+    ],
+  };
+  config.tun = {
+    ...sourceTun,
+    mtu: 1400,
+  };
 
   const airportRules = rewriteAirportRules(config.rules, replaceableTargets);
   config.rules = [
+    ...CLIENT_DIRECT_IP_CIDRS.map((cidr) => `IP-CIDR,${cidr},DIRECT,no-resolve`),
+    ...(FORCE_TCP_ENABLED
+      ? FORCE_TCP_DOMAINS.map(
+        (domain) => `AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,${domain})),REJECT`,
+      )
+      : []),
     ...AI_ISP_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
     ...IP_CHECK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
     ...TX_BULK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${TX_GROUP_NAME}`),
-    ...CLIENT_DIRECT_IP_CIDRS.map((cidr) => `IP-CIDR,${cidr},DIRECT,no-resolve`),
     "RULE-SET,loyalsoldier-applications,DIRECT",
     "RULE-SET,loyalsoldier-private,DIRECT",
     "RULE-SET,loyalsoldier-reject,REJECT",
@@ -2538,17 +2777,22 @@ GLOBALJS
   local ai_isp_domains_base64
   local direct_bulk_domains_base64
   local client_direct_ip_cidrs_base64
+  local force_tcp_domains_base64
   local ai_isp_domains_json
   local direct_bulk_domains_json='[]'
   local direct_bulk_apps_json='[]'
   local client_direct_ip_cidrs_json
+  local force_tcp_domains_json
   local direct_bulk_enabled_js=false
+  local force_tcp_enabled_js=false
   local hy2_use_bbr_js=false
   ai_isp_domains_base64=$(printf '%s' "${AI_ISP_DOMAINS}" | base64 | tr -d '\n')
   direct_bulk_domains_base64=$(printf '%s' "${DIRECT_BULK_DOMAINS}" | base64 | tr -d '\n')
   client_direct_ip_cidrs_base64=$(printf '%s' "${CLIENT_DIRECT_IP_CIDRS}" | base64 | tr -d '\n')
+  force_tcp_domains_base64=$(printf '%s' "${CLASH_FORCE_TCP_DOMAINS}" | base64 | tr -d '\n')
   ai_isp_domains_json=$(jq -cn --arg domains "${AI_ISP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   client_direct_ip_cidrs_json=$(jq -cn --arg cidrs "${CLIENT_DIRECT_IP_CIDRS}" '$cidrs | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
+  force_tcp_domains_json=$(jq -cn --arg domains "${CLASH_FORCE_TCP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   if is_true "${DIRECT_BULK_ENABLED}"; then
     direct_bulk_enabled_js=true
     direct_bulk_domains_json=$(jq -cn --arg domains "${DIRECT_BULK_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
@@ -2556,6 +2800,9 @@ GLOBALJS
   fi
   if [[ "${HYSTERIA_CC_MODE,,}" == "bbr" ]]; then
     hy2_use_bbr_js=true
+  fi
+  if is_true "${CLASH_FORCE_TCP_ENABLED}"; then
+    force_tcp_enabled_js=true
   fi
   
   sed -i "s|SECRET_PLACEHOLDER|${secret}|g" "${functions_dir}/c.js"
@@ -2570,6 +2817,8 @@ GLOBALJS
   sed -i "s|AI_ISP_DOMAINS_BASE64_PLACEHOLDER|${ai_isp_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER|${direct_bulk_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER|${client_direct_ip_cidrs_base64}|g" "${functions_dir}/c.js"
+  sed -i "s|CLASH_FORCE_TCP_DOMAINS_BASE64_PLACEHOLDER|${force_tcp_domains_base64}|g" "${functions_dir}/c.js"
+  sed -i "s|CLASH_FORCE_TCP_ENABLED_PLACEHOLDER|${force_tcp_enabled_js}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_ENABLED_PLACEHOLDER|${direct_bulk_enabled_js}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_USE_BBR_PLACEHOLDER|${hy2_use_bbr_js}|g" "${functions_dir}/c.js"
@@ -2582,6 +2831,8 @@ GLOBALJS
   sed -i "s|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|${direct_bulk_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER|${client_direct_ip_cidrs_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|CLASH_FORCE_TCP_DOMAINS_JSON_PLACEHOLDER|${force_tcp_domains_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|CLASH_FORCE_TCP_ENABLED_PLACEHOLDER|${force_tcp_enabled_js}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_USE_BBR_PLACEHOLDER|${hy2_use_bbr_js}|g" "${pages_dir}/global-extension.js"
   sed -i "s|CLASH_RULESET_BASE_URL_PLACEHOLDER|${CLASH_RULESET_BASE_URL%/}|g" "${pages_dir}/global-extension.js"
   sed -i "s|TROJAN_DOMAIN_PLACEHOLDER|${TROJAN_DOMAIN}|g" "${pages_dir}/global-extension.js"
@@ -2629,7 +2880,7 @@ GLOBALJS
 REDIRECTS
 
   chmod 0755 "${functions_dir}"
-  chmod 0644 \
+  chmod 0600 \
     "${functions_dir}/v2.js" \
     "${functions_dir}/sr.js" \
     "${functions_dir}/c.js" \
@@ -2642,9 +2893,18 @@ REDIRECTS
   # 检查 wrangler 是否安装
   if ! command -v wrangler &>/dev/null; then
     log_warn "wrangler CLI 未安装，跳过自动部署"
-    log_info "手动部署命令: cd ${pages_dir} && wrangler pages deploy ."
+    if ! activate_staged_pages "${pages_dir}" "${live_pages_dir}"; then
+      discard_pages_stage
+      release_pages_deploy_lock
+      return 1
+    fi
+    log_info "手动部署命令: cd ${live_pages_dir} && wrangler pages deploy ."
+    discard_pages_stage
+    release_pages_deploy_lock
     return 0
   fi
+
+  validate_generated_pages_assets "${pages_dir}"
 
   log_info "开始部署到 Cloudflare Pages..."
   
@@ -2657,10 +2917,32 @@ REDIRECTS
     log_info "Telegram 模块: https://${SUB_DOMAIN}/sr (Shadowrocket)"
     
     # 验证订阅
-    verify_subscription
+    if verify_subscription; then
+      if ! activate_staged_pages "${pages_dir}" "${live_pages_dir}"; then
+        log_error "本地资产切换失败，重新部署原版本以保持线上与本地一致"
+        (cd "${live_pages_dir}" && GIT_OPTIONAL_LOCKS=0 CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="${CF_PAGES_PROJECT}" --branch=main 2>&1) || true
+        discard_pages_stage
+        release_pages_deploy_lock
+        return 1
+      fi
+      discard_pages_stage
+      release_pages_deploy_lock
+      return 0
+    fi
+    log_error "新 Pages 部署线上验证失败，开始重新部署原版本"
+    if (cd "${live_pages_dir}" && GIT_OPTIONAL_LOCKS=0 CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="${CF_PAGES_PROJECT}" --branch=main 2>&1); then
+      log_success "Cloudflare Pages 已恢复到部署前资产"
+    else
+      log_error "Cloudflare Pages 自动恢复失败，请立即执行控制台回滚"
+    fi
+    discard_pages_stage
+    release_pages_deploy_lock
+    return 1
   else
     log_error "Cloudflare Pages 部署失败"
-    log_info "请手动执行: cd ${pages_dir} && wrangler pages deploy ."
+    log_info "原 Pages 本地资产保持不变"
+    discard_pages_stage
+    release_pages_deploy_lock
     return 1
   fi
 }
@@ -2670,6 +2952,27 @@ main() {
   require_supported_os
   load_env
   validate_config
+  if (( PAGES_ONLY == 1 )); then
+    require_root
+    local pages_required_var
+    for pages_required_var in CF_API_TOKEN CF_ACCOUNT_ID SUB_DOMAIN; do
+      if [[ -z "${!pages_required_var:-}" ]]; then
+        log_error "Pages-only 发布需要 ${pages_required_var}"
+        exit 1
+      fi
+    done
+    validate_domain_like "SUB_DOMAIN" "${SUB_DOMAIN}"
+    for command_name in curl flock git jq node wrangler; do
+      command -v "${command_name}" >/dev/null 2>&1 || {
+        log_error "Pages-only 发布需要 ${command_name}"
+        exit 1
+      }
+    done
+    build_isp_json
+    update_cloudflare_pages
+    log_success "Pages-only 发布完成；未修改 sing-box、UFW 或系统网络"
+    return
+  fi
   if (( VALIDATE_ONLY == 1 )); then
     command -v jq >/dev/null 2>&1 || {
       log_error "校验需要 jq"
