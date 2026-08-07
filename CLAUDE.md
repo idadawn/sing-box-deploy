@@ -64,6 +64,9 @@ Each ISP row produces:
 - The default UDP receive/send maximum is 16 MiB.
 - Linux TCP BBR + `fq` are enabled when the kernel supports them.
 - TCP Fast Open is applied to Trojan listen fields and ISP SOCKS dial fields.
+- Generated Clash defaults use Trojan-first fallback groups; latency-only URL tests must not select the default route.
+- Generated Clash DNS follows routing rules, resolves proxy node domains through the dedicated domestic resolvers, and sends foreign DoH through the Trojan-first fallback group.
+- `CLASH_FORCE_TCP_ENABLED` forces configured domains away from client UDP/443 without disabling the Hysteria2 transport itself.
 
 ## Key files
 

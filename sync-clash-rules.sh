@@ -119,7 +119,7 @@ load_env_file() {
 
 require_commands() {
   local command_name
-  for command_name in curl git jq; do
+  for command_name in curl flock git jq readlink; do
     command -v "${command_name}" >/dev/null 2>&1 || {
       log_error "缺少命令: ${command_name}"
       exit 1
@@ -344,9 +344,19 @@ main() {
   local default_lock_file="${TMPDIR:-/tmp}/sing-box-deploy-clash-rules.lock"
   (( EUID == 0 )) && default_lock_file="/run/lock/sing-box-deploy-clash-rules.lock"
   local lock_file="${CLASH_RULESET_LOCK_FILE:-${default_lock_file}}"
-  exec 9>"${lock_file}"
-  if command -v flock >/dev/null 2>&1; then
-    flock -n 9 || { log_warn "已有规则同步任务正在运行，本次跳过"; exit 0; }
+  if [[ -n "${CLASH_RULESET_LOCK_HELD_FD:-}" ]]; then
+    [[ "${CLASH_RULESET_LOCK_HELD_FD}" =~ ^[0-9]+$ \
+      && -e "/proc/self/fd/${CLASH_RULESET_LOCK_HELD_FD}" ]] || {
+      log_error "继承的 Pages 发布锁无效"
+      exit 1
+    }
+    [[ "$(readlink -f "/proc/self/fd/${CLASH_RULESET_LOCK_HELD_FD}")" == "$(readlink -f "${lock_file}")" ]] || {
+      log_error "继承的 Pages 发布锁与规则锁不一致"
+      exit 1
+    }
+  else
+    exec 9>"${lock_file}"
+    flock -n 9 || { log_warn "已有规则同步或 Pages 发布任务正在运行，本次跳过"; exit 0; }
   fi
 
   local upstream_sha raw_base_url current_sha=""

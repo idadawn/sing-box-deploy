@@ -14,6 +14,8 @@
 - ISP 地址、账号和密码只保存在服务器本地私有 TSV 文件中。
 - 自动生成 v2rayN/v2rayNG、Clash/Mihomo 与 Shadowrocket 入口，并发布到 Cloudflare Pages。
 - 默认使用 Hysteria2 自适应拥塞控制，并优化 Linux UDP 缓冲、TCP BBR/fq 与 TCP Fast Open。
+- Clash/Mihomo 默认使用 Trojan/TCP 优先的故障转移组；Hysteria2 保留为备用或手动选择，不再让延迟型 `url-test` 决定默认路径。
+- GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，使浏览器在高丢包链路上直接回落到 HTTP/2/TCP。
 - 自动同步并校验 Clash 规则快照，失败时继续使用上一版。
 - 支持出口健康检查、systemd 定时任务和可选 SMTP 告警。
 - 支持把敏感配置导出为加密迁移包，在新服务器安全恢复。
@@ -155,6 +157,8 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | `DIRECT_BULK_APPS` | 可选大流量应用，当前支持 `telegram` |
 | `DIRECT_BULK_IP_CIDRS` | 自定义大流量直出目标 IP/CIDR |
 | `CLIENT_DIRECT_IP_CIDRS` | Clash/Mihomo 客户端需精确绕过代理的目标 IP/CIDR |
+| `CLASH_FORCE_TCP_ENABLED` | 是否让指定域名拒绝客户端 UDP/443 并回落到 HTTP/2/TCP |
+| `CLASH_FORCE_TCP_DOMAINS` | 强制 TCP 的域名清单；留空使用内置 GitHub、Google、X 清单 |
 
 ### 性能
 
@@ -242,6 +246,10 @@ Content-Disposition: attachment; filename=<编号>
 
 响应同时提供 RFC 5987 的 `filename*`；文件名不添加引号和 `.yaml` 后缀，以兼容采用不同响应头解析方式的客户端。
 
+Clash/Mihomo 的默认入口是 `🛡️ 自动容灾`：按订阅顺序优先使用 `T-<编号>-TJ`，只有 TCP 入口健康检查失败才切到 `T-<编号>-HY2`。为兼容客户端已保存的选择，`♻️ 自动选择` 名称继续保留，但也采用相同的 TCP 优先故障转移语义。`📦 TX 大流量`、`🛡️ ISP 出口自动`、`🤖 AI 自动` 同样采用该策略。
+
+订阅 DNS 使用国内 DoH 解析节点域名，并通过 `🛡️ 自动容灾` 访问国外 DoH；`respect-rules: true` 保证 DNS 连接服从分流规则，同时避免节点域名解析形成启动环。
+
 ### 首页可见性
 
 首页读取部署时生成的 `subscriptions.json`。该文件包含编号、ISP IP、到期时间和订阅路径，便于识别实际出口；不会包含 ISP 账号或密码。由于 IP 会在前端公开，不能把“隐藏首页编号”视为访问控制。
@@ -296,6 +304,14 @@ sudo ./manage.sh
 ```
 
 支持查看状态、追踪日志、重启服务、检查配置、测试 ISP 出口、管理备份和卸载。
+
+只更新 Cloudflare Pages 订阅而不触碰数据面时使用：
+
+```bash
+sudo ./install.sh --pages-only
+```
+
+该模式仍会校验私有 ISP 清单、同步规则快照、生成并验证 Pages 资产，但不会安装依赖、改写 sing-box 配置、调整 UFW/内核参数或重启服务。同步、生成、部署和验证共用一把互斥锁；新资产在线上验证通过后才替换本地版本，验证失败会自动重新部署原版本。
 
 ### 常用命令
 
@@ -394,6 +410,12 @@ ufw status numbered
 ```
 
 同时检查云平台安全组、DNS 解析、TLS 域名和客户端系统时间。Trojan 使用 TCP，Hysteria2 使用 UDP，两类规则需要分别放行。
+
+### GitHub、Google 或 X 首包慢、下载卡住
+
+先在 Clash/Mihomo 中把 `🚀 节点选择` 固定为 `🛡️ 自动容灾` 或 `T-<编号>-TJ`。默认订阅会阻止这些站点使用 UDP/443，从而避免浏览器等待 HTTP/3 超时后才回落。
+
+如果 Trojan 明显正常而 Hysteria2 仍然慢，检查客户端到 T 的 RTT、丢包和 UDP 限速。Clash Verge Rev 的 gVisor TUN 若使用默认 MTU 9000，可在本机合并配置中依次测试 `1400`、`1380`；选择稳定工作的最高值，不要直接修改服务器物理网卡 MTU。
 
 ### 节点可连接但出口错误
 
