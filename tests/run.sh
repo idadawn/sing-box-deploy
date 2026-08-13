@@ -342,8 +342,33 @@ grep -Fq "const homepageHiddenIds = new Set(['dawn']);" "${ROOT_DIR}/cloudflare-
   [[ -z "${CLIENT_DIRECT_IP_CIDRS}" ]]
 
   CLIENT_DIRECT_IP_CIDRS="203.0.113.42,10.0.0.0/8,2001:DB8::1,2001:db8::/48"
+  CLIENT_DIRECT_IP_CIDRS_FILE=""
   normalize_client_direct_ip_cidrs
   [[ "${CLIENT_DIRECT_IP_CIDRS}" == "203.0.113.42/32,10.0.0.0/8,2001:db8::1/128,2001:db8::/48" ]]
+
+  cat > "${TMP_DIR}/client-direct-cidrs.txt" <<'EOF'
+# 跟踪的 tx 直连规则
+192.129.0.251/32
+192.129.228.39
+192.129.228.101/32
+192.132.0.0/16
+EOF
+  CLIENT_DIRECT_IP_CIDRS="192.129.0.251/32"
+  CLIENT_DIRECT_IP_CIDRS_FILE="${TMP_DIR}/client-direct-cidrs.txt"
+  normalize_client_direct_ip_cidrs
+  [[ "${CLIENT_DIRECT_IP_CIDRS}" == "192.129.0.251/32,192.129.228.39/32,192.129.228.101/32,192.132.0.0/16" ]]
+
+  CLIENT_DIRECT_IP_CIDRS=""
+  CLIENT_DIRECT_IP_CIDRS_FILE="config/tx-client-direct-cidrs.txt"
+  normalize_client_direct_ip_cidrs
+  [[ "${CLIENT_DIRECT_IP_CIDRS}" == "10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,192.129.0.251/32,192.129.228.39/32,192.129.228.101/32,192.132.0.0/16,::1/128,fc00::/7,fe80::/10" ]]
+
+  CLIENT_DIRECT_IP_CIDRS=""
+  CLIENT_DIRECT_IP_CIDRS_FILE="${TMP_DIR}/missing-client-direct-cidrs.txt"
+  if normalize_client_direct_ip_cidrs 2>/dev/null; then
+    echo "Expected missing CLIENT_DIRECT_IP_CIDRS_FILE validation failure" >&2
+    exit 1
+  fi
 
   for invalid in \
     "999.0.0.1/32" \
@@ -352,7 +377,7 @@ grep -Fq "const homepageHiddenIds = new Set(['dawn']);" "${ROOT_DIR}/cloudflare-
     "2001:db8::1/129" \
     "2001:db8::1::2/128" \
     "203.0.113.42/32,MATCH,DIRECT"; do
-    if CLIENT_DIRECT_IP_CIDRS="${invalid}" normalize_client_direct_ip_cidrs 2>/dev/null; then
+    if CLIENT_DIRECT_IP_CIDRS_FILE="" CLIENT_DIRECT_IP_CIDRS="${invalid}" normalize_client_direct_ip_cidrs 2>/dev/null; then
       echo "Expected CLIENT_DIRECT_IP_CIDRS validation failure: ${invalid}" >&2
       exit 1
     fi
