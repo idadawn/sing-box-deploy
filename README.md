@@ -157,6 +157,7 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 | `DIRECT_BULK_APPS` | 可选大流量应用，当前支持 `telegram` |
 | `DIRECT_BULK_IP_CIDRS` | 自定义大流量直出目标 IP/CIDR |
 | `CLIENT_DIRECT_IP_CIDRS` | Clash/Mihomo 客户端需精确绕过代理的目标 IP/CIDR |
+| `CLIENT_DIRECT_IP_CIDRS_FILE` | 可选的客户端直连 CIDR 文件，相对路径以仓库根目录为基准 |
 | `CLASH_FORCE_TCP_ENABLED` | 是否让指定域名拒绝客户端 UDP/443 并回落到 HTTP/2/TCP |
 | `CLASH_FORCE_TCP_DOMAINS` | 强制 TCP 的域名清单；留空使用内置 GitHub、Google、X 清单 |
 
@@ -258,7 +259,7 @@ Clash/Mihomo 的默认入口是 `🛡️ 自动容灾`：按订阅顺序优先�
 
 访问首页时追加 `?all=1` 可临时显示包含隐藏编号在内的全部订阅，例如 `https://<SUB_DOMAIN>/?all=1`。该后缀是便捷入口，不是身份认证。
 
-`CLIENT_DIRECT_IP_CIDRS` 会同时注入 Clash/Mihomo 订阅和全局扩展脚本，并置于机场及通用规则之前。当业务系统使用公网格式的管理地址时，RFC1918、`lancidr` 和 `GEOIP,LAN` 都不会命中，应使用精确 `/32` 直连规则，避免放大到整个公网网段。
+`CLIENT_DIRECT_IP_CIDRS` 与 `CLIENT_DIRECT_IP_CIDRS_FILE` 会合并、去重，同时注入 Clash/Mihomo 订阅和全局扩展脚本，并置于机场及通用规则之前。文件支持空行和 `#` 注释；`tx` 使用仓库中的 `config/tx-client-direct-cidrs.txt` 维护这组可公开、非敏感的规则。当业务系统使用公网格式的管理地址时，RFC1918、`lancidr` 和 `GEOIP,LAN` 都不会命中，应优先使用精确 `/32` 直连规则，只在已确认整段由内部网络使用时才放宽前缀。
 
 ### Clash Verge 全局扩展脚本
 

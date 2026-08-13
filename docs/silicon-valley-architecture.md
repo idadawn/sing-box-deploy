@@ -69,6 +69,11 @@
 WireGuard 不接管默认路由，硅谷公网出口仍为 `43.162.81.53`。公司内网统一
 使用 `10.78.1.x` 地址访问。
 
+Clash/Mihomo 客户端直连规则由
+`config/tx-client-direct-cidrs.txt` 跟踪，tx 的 `.env` 通过
+`CLIENT_DIRECT_IP_CIDRS_FILE=config/tx-client-direct-cidrs.txt` 引用。这些规则只影响
+Pages 生成的客户端订阅和全局扩展，不改变 sing-box 数据面出口。
+
 ## 安全基线
 
 - SSH 只允许密钥认证，禁用 root 登录和交互式密码认证。

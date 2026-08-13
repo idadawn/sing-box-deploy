@@ -389,8 +389,24 @@ normalize_ip_or_cidr() {
 }
 
 normalize_client_direct_ip_cidrs() {
-  local item normalized_item
-  local -a normalized=()
+  local item normalized_item source_file raw_values
+  local normalized=""
+  raw_values="${CLIENT_DIRECT_IP_CIDRS:-}"
+  source_file="${CLIENT_DIRECT_IP_CIDRS_FILE:-}"
+
+  if [[ -n "${source_file}" ]]; then
+    if [[ "${source_file}" != /* ]]; then
+      source_file="${SCRIPT_DIR}/${source_file}"
+    fi
+    if [[ ! -f "${source_file}" || ! -r "${source_file}" ]]; then
+      log_error "CLIENT_DIRECT_IP_CIDRS_FILE 不存在或不可读: ${source_file}"
+      return 1
+    fi
+    CLIENT_DIRECT_IP_CIDRS_FILE="${source_file}"
+    raw_values+=$'\n'
+    raw_values+="$(sed 's/[[:space:]]*#.*$//' "${source_file}")"
+  fi
+
   while IFS= read -r item; do
     item="$(trim "${item}")"
     [[ -z "${item}" ]] && continue
@@ -398,15 +414,13 @@ normalize_client_direct_ip_cidrs() {
       log_error "CLIENT_DIRECT_IP_CIDRS 包含非法 IP/CIDR: ${item}"
       return 1
     fi
-    normalized+=("${normalized_item}")
-  done < <(printf '%s\n' "${CLIENT_DIRECT_IP_CIDRS:-}" | tr ',\t ' '\n')
+    if ! csv_list_contains "${normalized}" "${normalized_item}"; then
+      normalized="$(append_csv_list "${normalized}" "${normalized_item}")"
+    fi
+  done < <(printf '%s\n' "${raw_values}" | tr ',\t ' '\n')
 
-  if (( ${#normalized[@]} > 0 )); then
-    CLIENT_DIRECT_IP_CIDRS="$(IFS=,; printf '%s' "${normalized[*]}")"
-  else
-    CLIENT_DIRECT_IP_CIDRS=""
-  fi
-  export CLIENT_DIRECT_IP_CIDRS
+  CLIENT_DIRECT_IP_CIDRS="${normalized}"
+  export CLIENT_DIRECT_IP_CIDRS CLIENT_DIRECT_IP_CIDRS_FILE
 }
 
 require_root() {
@@ -499,6 +513,7 @@ load_env() {
   DIRECT_BULK_APPS="${DIRECT_BULK_APPS:-}"
   DIRECT_BULK_IP_CIDRS="${DIRECT_BULK_IP_CIDRS:-}"
   CLIENT_DIRECT_IP_CIDRS="${CLIENT_DIRECT_IP_CIDRS:-}"
+  CLIENT_DIRECT_IP_CIDRS_FILE="${CLIENT_DIRECT_IP_CIDRS_FILE:-}"
   CLASH_FORCE_TCP_ENABLED="${CLASH_FORCE_TCP_ENABLED:-true}"
   CLASH_FORCE_TCP_DOMAINS="${CLASH_FORCE_TCP_DOMAINS:-${DEFAULT_CLASH_FORCE_TCP_DOMAINS}}"
   if csv_list_contains "${DIRECT_BULK_APPS}" "telegram"; then
