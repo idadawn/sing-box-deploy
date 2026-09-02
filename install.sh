@@ -49,6 +49,7 @@ DEFAULT_AI_ISP_DOMAINS+=",qwen.ai,dashscope.aliyuncs.com,tavily.com,exa.ai"
 
 DEFAULT_DIRECT_BULK_DOMAINS="youtube.com,youtu.be,youtube-nocookie.com,googlevideo.com,ytimg.com,youtubei.googleapis.com,ggpht.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",twitch.tv,ttvnw.net,jtvnw.net,vimeo.com,vimeocdn.com,dailymotion.com,dmcdn.net"
+DEFAULT_DIRECT_BULK_DOMAINS+=",rou.video,rn221.xyz,rn227.xyz,rn248.xyz"
 DEFAULT_DIRECT_BULK_DOMAINS+=",python.org,pypi.org,pythonhosted.org,nodejs.org,npmjs.org,npmjs.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",githubassets.com,githubusercontent.com,release-assets.githubusercontent.com,codeload.github.com,ghcr.io"
 DEFAULT_DIRECT_BULK_DOMAINS+=",docker.io,docker.com,dockerusercontent.com,production.cloudflare.docker.com"

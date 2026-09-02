@@ -220,6 +220,7 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 - 不会从当前 ISP 静默切换到其他 ISP。
 - 不会把 T 公网 IP 当作通用兜底出口。
 - 只有显式列入大流量规则的域名、应用或 IP/CIDR 可以使用 `direct-out`。
+- 默认视频直出清单覆盖 YouTube、Twitch、Vimeo、Dailymotion 以及 `rou.video` 的主站和已确认资源域名 `rn221.xyz`、`rn227.xyz`、`rn248.xyz`。
 - Telegram 应用开关会同时添加域名与 IP/CIDR 规则，覆盖 `5.28.192.0/18`、完整 `91.108.0.0/16` 等专用地址段；原生 MTProto 流量不依赖域名嗅探。
 - Clash 客户端使用每日同步的 `telegramcidr` 规则；服务端使用脚本内置 CIDR，并可通过 `DIRECT_BULK_IP_CIDRS` 追加范围。
 - Shadowrocket 使用独立的高优先级 `/sr` 模块，避免 Telegram 被客户端原配置误判为 `DIRECT`。
