@@ -13,6 +13,7 @@
 - Apple 策略组默认直连且保留手动代理选项；已保存的历史选择可能需要手动切回 `DIRECT`
 - GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，国外 DNS 经交互故障转移组访问 DoH
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
+- 默认视频清单包含 YouTube、Twitch、Vimeo、Dailymotion、`rou.video` 及其已确认的 `rn221.xyz` / `rn227.xyz` / `rn248.xyz` 资源域名
 - 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 TX 大流量`，服务端显式使用 T 公网出口
 - 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
 - `/sr` 提供不含凭据的 Shadowrocket Telegram 高优先级模块，引用每日同步的 blackmatrix7 专用规则镜像
