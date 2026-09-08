@@ -2904,8 +2904,12 @@ GLOBALJS
   node "${SCRIPT_DIR}/scripts/tx-direct.mjs" pages "${pages_dir}"
 
   # 主页公开订阅编号、ISP 地址、到期日和独立链接，不包含 ISP 账号或密码。
+  local tx_homepage_enabled=false
+  is_true "${TX_DIRECT_ENABLED:-false}" && tx_homepage_enabled=true
   jq -cn \
     --argjson entries "${ISP_PUBLIC_LIST_JSON}" \
+    --argjson tx_enabled "${tx_homepage_enabled}" \
+    --arg tx_ip "${TX_DIRECT_IP:-}" \
     '$entries | map({
       id,
       host,
@@ -2914,7 +2918,17 @@ GLOBALJS
       clash: ("/c?isp=" + .id),
       shadowrocket: ("/v2?isp=" + .id),
       shadowrocket_module: "/sr"
-    })' \
+    }) + (if $tx_enabled then [{
+      id: "tx",
+      name: "TX 直出",
+      kind: "tx-direct",
+      host: $tx_ip,
+      expires: null,
+      v2: "/tx-v2",
+      clash: "/tx",
+      shadowrocket: "/tx-v2",
+      shadowrocket_module: "/sr"
+    }] else [] end)' \
     > "${pages_dir}/subscriptions.json"
   
   # 生成 _redirects（每次重建，确保隐藏路径始终最新）
