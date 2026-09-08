@@ -21,14 +21,17 @@ main_tx_direct() {
   local primary=/etc/sing-box/config.json
   local own=/etc/sing-box-tx-direct/config.json
   local port protocol
-  # Reserve the entire historical ISP slot space, including retired rows.
+  # Preserve active ISP slots. Retired slots may be reused by the independent service.
   local inventory="${ISP_LIST_FILE}"
   [[ "${inventory}" == /* ]] || inventory="${SCRIPT_DIR}/${inventory}"
-  local slots
-  slots=$(awk -F '\t' 'NF && $1 !~ /^#/ && $1 != "编号" && tolower($1) != "id" {n++} END {print n+0}' "${inventory}")
+  local today
+  today=$(date -u +%F)
+  local -a expiries=()
+  mapfile -t expiries < <(awk -F '\t' 'NF && $1 !~ /^#/ && $1 != "编号" && tolower($1) != "id" {sub(/\r$/, "", $7); print $7}' "${inventory}")
   for port in "${TX_DIRECT_TROJAN_PORT:-443}" "${TX_DIRECT_HYSTERIA_PORT:-8443}"; do
     local slot
-    for ((slot=0; slot<slots; slot++)); do
+    for ((slot=0; slot<${#expiries[@]}; slot++)); do
+      [[ "${expiries[slot]}" < "${today}" ]] && continue
       if (( port == TROJAN_PORT + slot * ISP_PORT_STEP || port == HYSTERIA_PORT + slot * ISP_PORT_STEP )); then
         log_error "TX port ${port} conflicts with an ISP slot"; return 1
       fi

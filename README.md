@@ -145,6 +145,8 @@ sudo ./install.sh --pages-only
 新服务 `sing-box-tx-direct` 使用独立的 Trojan TCP 443 和 Hysteria2 UDP 8443
 （可配置，须在云安全组放行），不会重启或改写原 `sing-box` 服务。
 普通互联网及 AI 流量均使用 TX 公网出口；不会加入原有 ISP 订阅或容灾组。
+当前 tx 部署复用已退役 `ds-2` 的 TCP 14687 / UDP 19623，使用独立凭据。
+允许复用过期条目的空闲端口；若旧 ISP 续费后与 TX 端口重叠，校验会拒绝部署，须先调整 TX 端口。
 节点通过 IP 连接，保留原域名 SNI 验证 TLS 证书，不关闭证书验证。
 
 - Clash/Mihomo：`https://<SUB_DOMAIN>/tx`

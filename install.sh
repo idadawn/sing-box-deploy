@@ -766,6 +766,20 @@ validate_config() {
   normalize_client_direct_ip_cidrs || exit 1
   load_isp_list
 
+  # Fail closed if an ISP is renewed into a port now used by independent TX direct.
+  if is_true "${TX_DIRECT_ENABLED:-false}"; then
+    local tx_port slot
+    for tx_port in "${TX_DIRECT_TROJAN_PORT:-443}" "${TX_DIRECT_HYSTERIA_PORT:-8443}"; do
+      validate_port 'TX direct' "${tx_port}"
+      for ((slot=0; slot<ISP_COUNT; slot++)); do
+        if [[ "${tx_port}" == "${ISP_TROJAN_PORTS[slot]}" || "${tx_port}" == "${ISP_HYSTERIA_PORTS[slot]}" ]]; then
+          log_error "TX direct port ${tx_port} conflicts with active ISP ${ISP_IDS[slot]}"
+          exit 1
+        fi
+      done
+    done
+  fi
+
   validate_positive_int "HYSTERIA_UP_MBPS" "${HYSTERIA_UP_MBPS}"
   validate_positive_int "HYSTERIA_DOWN_MBPS" "${HYSTERIA_DOWN_MBPS}"
   case "${HYSTERIA_CC_MODE,,}" in
