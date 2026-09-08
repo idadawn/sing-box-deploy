@@ -519,7 +519,7 @@
 <body>
   <main class="page">
     <header class="hero">
-      <div class="badge">T 中继 · 私有 ISP 出口</div>
+      <div class="badge">T 中继 · ISP 出口 / TX 直出</div>
       <h1>多出口订阅入口</h1>
       <p class="subtitle">从左侧选择一个出口节点，右侧会显示该节点专属的 v2ray、Clash 与 Shadowrocket 入口。每个节点订阅只包含对应出口的 Trojan 和 Hysteria2 节点。</p>
     </header>
@@ -533,7 +533,7 @@
         <div id="nodeList" class="node-list" role="listbox" aria-label="可用出口节点">
           <p class="loading">正在加载节点列表…</p>
         </div>
-        <p class="sidebar-note">节点到期后会自动从列表移除，对应订阅接口返回 HTTP 410。</p>
+        <p class="sidebar-note">ISP 节点到期后会自动从列表移除。TX 直出使用独立订阅，不受 ISP 到期影响。</p>
       </aside>
 
       <section class="details" aria-live="polite">
@@ -619,7 +619,7 @@
 
         <div class="notice">
           <span class="notice-icon">ⓘ</span>
-          <span><strong>固定出口：</strong>AI 与普通流量会固定使用当前选择的 ISP，不会跨 ISP，也不会回落到 T 服务器公网直出。</span>
+          <span id="selectedPolicy">选择节点后查看出口策略。</span>
         </div>
         <div class="notice">
           <span class="notice-icon">ⓘ</span>
@@ -628,7 +628,7 @@
       </section>
     </section>
 
-    <footer class="footer">Powered by Cloudflare Pages · T 中继 / 私有 ISP 清单</footer>
+    <footer class="footer">Powered by Cloudflare Pages · ISP 出口 / TX 直出</footer>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite">订阅地址已复制</div>
@@ -643,6 +643,7 @@
       name: document.getElementById('selectedName'),
       host: document.getElementById('selectedHost'),
       expiry: document.getElementById('selectedExpiry'),
+      policy: document.getElementById('selectedPolicy'),
       v2Url: document.getElementById('v2Url'),
       clashUrl: document.getElementById('clashUrl'),
       shadowrocketUrl: document.getElementById('shadowrocketUrl'),
@@ -663,6 +664,10 @@
       return new URL(path, base).toString();
     }
 
+    function expiryText(entry) {
+      return entry.kind === 'tx-direct' ? '不受 ISP 到期影响' : `到期 ${entry.expires}`;
+    }
+
     function selectSubscription(id, updateHistory = true) {
       const entry = subscriptions.find((item) => item.id === id);
       if (!entry) return;
@@ -672,9 +677,12 @@
       const shadowrocketUrl = absoluteUrl(entry.shadowrocket || entry.v2);
       const shadowrocketModuleUrl = absoluteUrl(entry.shadowrocket_module || '/sr');
 
-      elements.name.textContent = entry.id;
+      elements.name.textContent = entry.name || entry.id;
       elements.host.textContent = entry.host || 'IP 未提供';
-      elements.expiry.textContent = `到期 ${entry.expires}`;
+      elements.expiry.textContent = expiryText(entry);
+      elements.policy.textContent = entry.kind === 'tx-direct'
+        ? 'TX 直出：公网流量使用 TX 机器 IP。Clash 订阅保留内网优先直连规则，包括 192.129.0.0/16 和 192.132.0.0/16。'
+        : 'ISP 固定出口：AI 与普通流量使用当前选择的 ISP，指定视频等大流量按既有规则从 TX 直出。';
       elements.v2Url.value = v2Url;
       elements.clashUrl.value = clashUrl;
       elements.shadowrocketUrl.value = shadowrocketUrl;
@@ -714,11 +722,11 @@
 
       const name = document.createElement('span');
       name.className = 'node-name';
-      name.textContent = entry.id;
+      name.textContent = entry.name || entry.id;
 
       const expiry = document.createElement('span');
       expiry.className = 'node-expiry';
-      expiry.textContent = `${entry.host || 'IP 未提供'} · 到期 ${entry.expires}`;
+      expiry.textContent = `${entry.host || 'IP 未提供'} · ${expiryText(entry)}`;
 
       const arrow = document.createElement('span');
       arrow.className = 'node-arrow';
