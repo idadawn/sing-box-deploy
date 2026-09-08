@@ -15,7 +15,7 @@ file_mode() {
   fi
 }
 
-for script in install.sh manage.sh migrate.sh setup-ssh.sh sync-clash-rules.sh; do
+for script in install.sh manage.sh migrate.sh setup-ssh.sh sync-clash-rules.sh tx-direct.sh; do
   bash -n "${ROOT_DIR}/${script}"
 done
 
@@ -110,6 +110,7 @@ render_js_template() {
 }
 
 if command -v node >/dev/null 2>&1; then
+  node "${ROOT_DIR}/tests/tx-direct.mjs"
   extract_heredoc "  cat > \"\${functions_dir}/v2.js\" <<'V2JS'" "V2JS" "${TMP_DIR}/v2.template"
   extract_heredoc "  cat > \"\${functions_dir}/sr.js\" <<'SRJS'" "SRJS" "${TMP_DIR}/sr.template"
   extract_heredoc "  cat > \"\${functions_dir}/c.js\" <<'CJS'" "CJS" "${TMP_DIR}/c.template"
