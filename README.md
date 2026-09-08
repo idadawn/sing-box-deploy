@@ -131,6 +131,32 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 
 ## 核心配置
 
+### 独立 TX 公网出口订阅
+
+需要单独使用 TX 的公网 IP 时，设置 `.env` 中的 `TX_DIRECT_ENABLED=true`、
+`TX_DIRECT_IP` 和三个 `TX_DIRECT_*PASSWORD`，然后执行：
+
+```bash
+sudo bash tx-direct.sh --check
+sudo bash tx-direct.sh --deploy
+sudo ./install.sh --pages-only
+```
+
+新服务 `sing-box-tx-direct` 使用独立的 Trojan TCP 443 和 Hysteria2 UDP 8443
+（可配置，须在云安全组放行），不会重启或改写原 `sing-box` 服务。
+普通互联网及 AI 流量均使用 TX 公网出口；不会加入原有 ISP 订阅或容灾组。
+节点通过 IP 连接，保留原域名 SNI 验证 TLS 证书，不关闭证书验证。
+
+- Clash/Mihomo：`https://<SUB_DOMAIN>/tx`
+- v2rayN / Shadowrocket 节点：`https://<SUB_DOMAIN>/tx-v2`
+
+订阅不受 `ds-1` 等 ISP 到期日期影响，节点显示为 `T-tx-TJ` 和 `T-tx-HY2`。
+Clash 继续从 `CLIENT_DIRECT_IP_CIDRS_FILE` 下发内网优先直连规则，包括
+`192.129.0.0/16`、`192.132.0.0/16`；访问内网依赖客户端原有局域网或公司 VPN 路由。
+服务端还会拒绝内网及云元数据目标，防止把 TX 代理当作服务器内网入口。
+Shadowrocket 的节点订阅不携带分流配置，内网 DIRECT 规则应保留在手机配置中。
+禁用时设置 `TX_DIRECT_ENABLED=false` 并重新发布 Pages（接口返回 410），再停止新服务。
+
 ### 接入与证书
 
 | 变量 | 用途 |

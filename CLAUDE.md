@@ -13,7 +13,8 @@ The retired J server is out of scope. Never add, contact, or deploy to J.
 - An inbound for ISP `id` must route normal and AI traffic only to `isp-out-id`.
 - Do not add automatic cross-ISP or public-VPS fallback.
 - Keep `route.final=block`.
-- Public direct egress is allowed only for explicit `DIRECT_BULK_*` rules.
+- On the primary service, public direct egress is allowed only for explicit `DIRECT_BULK_*` rules.
+- Opt-in TX direct runs in `sing-box-tx-direct.service` with separate ports and credentials. Never inject its nodes into existing ISP subscriptions, `/s`, or fallback groups. Deploy it with `bash tx-direct.sh --deploy`; do not restart the primary service for TX-only changes.
 - `.env`, `isp-list.tsv`, generated subscriptions, and migration bundles contain secrets and must never enter Git.
 - Preserve TSV row order because it determines stable ingress ports.
 - Homepage hiding is presentation only, not authorization.
@@ -89,6 +90,7 @@ Pages assets under `cloudflare-pages-sub/functions/`, `subscriptions.json`, `glo
 - `/c` and `/c?isp=<id>`: Clash/Mihomo YAML
 - `/s`: Clash Verge/Mihomo global extension
 - `/sr`: credential-free Shadowrocket module forcing Telegram rules to `PROXY`
+- `/tx`, `/tx-v2`: independent opt-in TX public-egress subscriptions; client LAN rules share `CLIENT_DIRECT_IP_CIDRS_FILE`. These profiles do not expire with ISP rows.
 
 Single-ISP responses expose a stable profile name through `Profile-Title` and `Content-Disposition`, with a 24-hour profile update interval.
 The Shadowrocket node subscription remains `/v2?isp=<id>`; `/sr` is an additional high-priority rule module, not a node subscription.

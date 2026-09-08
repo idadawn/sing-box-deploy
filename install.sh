@@ -1626,6 +1626,8 @@ verify_subscription() {
   local script_ok=0
   local shadowrocket_ok=0
   local rules_ok=0
+  local tx_ok=1
+  is_true "${TX_DIRECT_ENABLED:-false}" && tx_ok=0
   local c_content=""
   local script_content=""
   local shadowrocket_content=""
@@ -1777,8 +1779,24 @@ verify_subscription() {
       fi
     fi
     
+    if [[ $tx_ok -eq 0 ]]; then
+      local tx_c tx_v2 cidr
+      tx_c=$(curl -fsS --max-time 10 "https://${domain}/tx?${verification_query}" 2>/dev/null || true)
+      tx_v2=$(curl -fsS --max-time 10 "https://${domain}/tx-v2?raw=1&${verification_query}" 2>/dev/null || true)
+      if grep -Fq 'name: "T-tx-TJ"' <<< "${tx_c}" && grep -Fq 'name: "T-tx-HY2"' <<< "${tx_c}" \
+        && grep -Fq "server: ${TX_DIRECT_IP}" <<< "${tx_c}" \
+        && [[ "$(grep -c '#T-tx-' <<< "${tx_v2}" || true)" -eq 2 ]]; then
+        tx_ok=1
+        while IFS= read -r cidr; do
+          [[ -z "${cidr}" ]] && continue
+          grep -Fq "IP-CIDR,${cidr},DIRECT,no-resolve" <<< "${tx_c}" || tx_ok=0
+        done < <(printf '%s\n' "${CLIENT_DIRECT_IP_CIDRS}" | tr ',' '\n')
+        (( tx_ok == 0 )) || log_success '独立 TX 订阅与内网直连规则验证通过'
+      fi
+    fi
+
     # 基础入口通过后，逐个验证私有 ISP 订阅只包含对应节点。
-    if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $shadowrocket_ok -eq 1 && $rules_ok -eq 1 ]]; then
+    if [[ $v2_ok -eq 1 && $c_ok -eq 1 && $script_ok -eq 1 && $shadowrocket_ok -eq 1 && $rules_ok -eq 1 && $tx_ok -eq 1 ]]; then
       local personal_ok=1
       local index id personal_v2 personal_c personal_c_headers
       local personal_c_profile personal_c_update_interval personal_c_filename personal_c_filename_expected
@@ -1830,6 +1848,7 @@ verify_subscription() {
   if [[ $rules_ok -eq 0 ]]; then
     log_error "Clash / Shadowrocket 规则镜像验证失败: https://${domain}/rules/metadata.json"
   fi
+  [[ $tx_ok -eq 1 ]] || log_error '独立 TX 订阅验证失败'
   log_info "请检查: 1) DNS 解析 2) Cloudflare Pages 部署状态 3) 自定义域名绑定"
   return 1
 }
@@ -1907,6 +1926,8 @@ validate_generated_pages_assets() {
     "${pages_dir}/functions/sr.js"
     "${pages_dir}/functions/c.js"
     "${pages_dir}/global-extension.js"
+    "${pages_dir}/functions/tx.js"
+    "${pages_dir}/functions/tx-v2.js"
   )
   local generated_file
 
@@ -2862,6 +2883,11 @@ GLOBALJS
   sed -i "s|ISP_PUBLIC_LIST_BASE64_PLACEHOLDER|${isp_public_list_base64}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_UP_PLACEHOLDER|${HYSTERIA_UP_MBPS}|g" "${pages_dir}/global-extension.js"
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${pages_dir}/global-extension.js"
+
+  # TX direct stays outside all existing ISP profiles and their fallback groups.
+  export CLIENT_DIRECT_IP_CIDRS AI_ISP_DOMAINS DIRECT_BULK_DOMAINS
+  export CLASH_FORCE_TCP_DOMAINS CLASH_FORCE_TCP_ENABLED CLASH_RULESET_BASE_URL
+  node "${SCRIPT_DIR}/scripts/tx-direct.mjs" pages "${pages_dir}"
 
   # 主页公开订阅编号、ISP 地址、到期日和独立链接，不包含 ISP 账号或密码。
   jq -cn \

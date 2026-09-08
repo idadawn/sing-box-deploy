@@ -1,0 +1,22 @@
+[Unit]
+Description=Independent TX public-egress proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/sing-box run -c /etc/sing-box-tx-direct/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3s
+LimitNOFILE=1048576
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sing-box-tx-direct
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
