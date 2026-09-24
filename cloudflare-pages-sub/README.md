@@ -13,6 +13,7 @@
 - 直连 `/c` 订阅的交互策略组使用 Hysteria2 优先的 `fallback`，`TX 大流量` 组仍优先 Trojan/TCP；`♻️ 自动选择` 名称仅为兼容已保存选择
 - Apple 策略组默认直连且保留手动代理选项；已保存的历史选择可能需要手动切回 `DIRECT`
 - GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，国外 DNS 经交互故障转移组访问 DoH
+- `/c` 与 `/tx` 默认将 DNS 查询经 `🛡️ 自动容灾` 发往 Cloudflare/Google DoH；仅 `geosite:cn,private` 使用国内直连 DoH。禁用并发 `fallback`，避免未知海外域名同时发给国内解析器；节点域名解析仍使用独立的 `proxy-server-nameserver`。更新订阅并重新加载配置后生效，已有客户端 DNS 覆盖需要单独检查。
 - Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
 - 默认视频清单包含 YouTube、Twitch、Vimeo、Dailymotion、`rou.video` 及其已确认的 `rn221.xyz` / `rn227.xyz` / `rn248.xyz` 资源域名
 - 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 TX 大流量`，服务端显式使用 T 公网出口

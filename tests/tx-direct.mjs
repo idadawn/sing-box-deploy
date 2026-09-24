@@ -45,6 +45,11 @@ assert.equal((yaml.match(/type: (trojan|hysteria2)\n/g) || []).length, 2);
 assert.equal((yaml.match(/server: 203\.0\.113\.50\n/g) || []).length, 2);
 assert.match(yaml, /sni: tj\.example\.com/);
 assert.match(yaml, /sni: hy\.example\.com/);
+const defaultResolvers = yaml.split('\n  nameserver:\n')[1].split('\n  nameserver-policy:')[0];
+assert.match(defaultResolvers, /dns-query#🛡️ 自动容灾/);
+assert.doesNotMatch(defaultResolvers, /doh\.pub|alidns|DIRECT/);
+assert.match(yaml, /"geosite:cn,private":/);
+assert.match(yaml, /\n  fallback: \[\]/);
 assert.doesNotMatch(yaml, /skip-cert-verify: true|ISP 出口|T-ds-|T-dawn/);
 for (const cidr of cidrs) {
   const rule = `IP-CIDR,${cidr},DIRECT,no-resolve`;

@@ -171,6 +171,16 @@ assert.match(
 );
 assert.match(clashBody, /respect-rules: true/);
 assert.match(clashBody, /https:\/\/1\.1\.1\.1\/dns-query#🛡️ 自动容灾/);
+// Domains outside the domestic/private allowlist must never be sent to a
+// direct resolver, even if a proxied fallback would eventually win the race.
+const dnsBlock = clashBody.split("\ndns:\n")[1].split("\nrule-providers:")[0];
+const defaultResolvers = dnsBlock.split("\n  nameserver:\n")[1].split("\n  nameserver-policy:")[0];
+assert.match(defaultResolvers, /https:\/\/1\.1\.1\.1\/dns-query#🛡️ 自动容灾/);
+assert.match(defaultResolvers, /https:\/\/8\.8\.8\.8\/dns-query#🛡️ 自动容灾/);
+assert.doesNotMatch(defaultResolvers, /doh\.pub|alidns|DIRECT/);
+assert.match(dnsBlock, /"geosite:cn,private":\n      - "https:\/\/doh\.pub\/dns-query#DIRECT"\n      - "https:\/\/dns\.alidns\.com\/dns-query#DIRECT"/);
+assert.match(dnsBlock, /\n  fallback: \[\]/);
+assert.doesNotMatch(dnsBlock, /fallback-filter:|geosite:gfw/);
 assert.match(clashBody, /tun:\n  mtu: 1400/);
 assert.doesNotMatch(clashBody, /type: url-test/);
 assert.doesNotMatch(clashBody, /tls:\/\/1\.1\.1\.1|tls:\/\/8\.8\.4\.4/);
