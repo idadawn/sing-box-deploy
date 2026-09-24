@@ -17,6 +17,7 @@ The retired J server is out of scope. Never add, contact, or deploy to J.
 - Opt-in TX direct runs in `sing-box-tx-direct.service` with separate ports and credentials. Never inject its nodes into existing ISP subscriptions, `/s`, or fallback groups. Deploy it with `bash tx-direct.sh --deploy`; do not restart the primary service for TX-only changes.
 - `.env`, `isp-list.tsv`, generated subscriptions, and migration bundles contain secrets and must never enter Git.
 - Preserve TSV row order because it determines stable ingress ports.
+- TSV expiry accepts a valid `YYYY-MM-DD` or `never`. Non-expiring entries stay active in every output and monitor; all-non-expiring subscriptions advertise `expire=0`, while mixed subscriptions retain the earliest finite expiry.
 - Homepage hiding is presentation only, not authorization.
 
 ## Common commands

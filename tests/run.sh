@@ -129,6 +129,7 @@ if command -v node >/dev/null 2>&1; then
   node --check "${TMP_DIR}/global.mjs"
   node --check "${TMP_DIR}/c-disabled.mjs"
   node --check "${TMP_DIR}/global-disabled.mjs"
+  node "${ROOT_DIR}/tests/non-expiring.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node --input-type=module - "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/sr.mjs" "${TMP_DIR}/global.mjs" "${TMP_DIR}/c-disabled.mjs" "${TMP_DIR}/global-disabled.mjs" <<'NODE'
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -336,6 +337,30 @@ assert.match(
 );
 assert.doesNotMatch(shadowrocketBody, /^(DOMAIN|DOMAIN-SUFFIX|IP-CIDR).*,DIRECT$/m);
 NODE
+fi
+
+# The production TSV loader requires Bash 4+ and GNU date/stat (Linux CI).
+if (( BASH_VERSINFO[0] >= 4 )) && date -u -d '2099-01-01' +%F >/dev/null 2>&1; then
+  (
+    source "${ROOT_DIR}/install.sh"
+    ISP_LIST_FILE="${TMP_DIR}/expiry.tsv"
+    TROJAN_PORT=443
+    HYSTERIA_PORT=8443
+    ISP_PORT_STEP=1000
+    printf 'expired\t203.0.113.1\t3128\t1080\tuser\tpass\t2000-01-01\npermanent\t203.0.113.2\t3128\t1080\tuser\tpass\tnever\ndated\t203.0.113.3\t3128\t1080\tuser\tpass\t2099-12-31\n' > "${ISP_LIST_FILE}"
+    chmod 600 "${ISP_LIST_FILE}"
+    load_isp_list
+    [[ "${ISP_IDS[*]}" == "permanent dated" ]]
+    [[ "${ISP_TROJAN_PORTS[*]}" == "1443 2443" ]]
+    [[ "${ISP_EXPIRES[*]}" == "never 2099-12-31" ]]
+    for invalid_expiry in forever 2026-99-99; do
+      printf 'invalid\t203.0.113.1\t3128\t1080\tuser\tpass\t%s\n' "${invalid_expiry}" > "${ISP_LIST_FILE}"
+      if (load_isp_list) >/dev/null 2>&1; then
+        echo "Expected invalid expiry to be rejected: ${invalid_expiry}" >&2
+        exit 1
+      fi
+    done
+  )
 fi
 
 grep -Fq 'shadowrocket_module: "/sr"' "${ROOT_DIR}/install.sh"
