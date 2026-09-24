@@ -2308,18 +2308,13 @@ dns:
     - https://doh.pub/dns-query
     - https://dns.alidns.com/dns-query
   nameserver:
-    - https://doh.pub/dns-query
-    - https://dns.alidns.com/dns-query
-  nameserver-policy:
-    "geosite:gfw":
-      - "https://1.1.1.1/dns-query#🛡️ 自动容灾"
-      - "https://8.8.8.8/dns-query#🛡️ 自动容灾"
-  fallback:
     - "https://1.1.1.1/dns-query#🛡️ 自动容灾"
     - "https://8.8.8.8/dns-query#🛡️ 自动容灾"
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
+  nameserver-policy:
+    "geosite:cn,private":
+      - "https://doh.pub/dns-query#DIRECT"
+      - "https://dns.alidns.com/dns-query#DIRECT"
+  fallback: []
 
 rule-providers:
   loyalsoldier-applications:
