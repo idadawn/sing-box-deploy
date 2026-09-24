@@ -654,10 +654,12 @@ load_isp_list() {
     validate_domain_like "ISP ${id} IP/域名" "${host}"
     validate_port "ISP ${id} HTTP_PORT" "${http_port}"
     validate_port "ISP ${id} SOCKS5_PORT" "${socks_port}"
-    [[ "${expires}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -u -d "${expires}T00:00:00Z" >/dev/null 2>&1 || {
-      log_error "ISP ${id} 到期时间必须是有效的 YYYY-MM-DD: ${expires}"
-      exit 1
-    }
+    if [[ "${expires}" != "never" ]]; then
+      [[ "${expires}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -u -d "${expires}T00:00:00Z" >/dev/null 2>&1 || {
+        log_error "ISP ${id} 到期时间必须是有效的 YYYY-MM-DD 或 never: ${expires}"
+        exit 1
+      }
+    fi
 
     trojan_port=$((TROJAN_PORT + slot * ISP_PORT_STEP))
     hysteria_port=$((HYSTERIA_PORT + slot * ISP_PORT_STEP))
@@ -672,7 +674,7 @@ load_isp_list() {
     done
     slot=$((slot + 1))
 
-    if [[ "${expires}" < "${today}" ]]; then
+    if [[ "${expires}" != "never" && "${expires}" < "${today}" ]]; then
       log_warn "ISP ${id} 已于 ${expires} 到期，本次部署跳过"
       continue
     fi
@@ -1452,7 +1454,7 @@ main() {
     expires="${expires%$'\r'}"
     [[ -z "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]] && continue
     [[ "${id:0:1}" == "#" || "${id}" == "编号" || "${id,,}" == "id" ]] && continue
-    [[ "${expires}" < "${today}" ]] && continue
+    [[ "${expires}" != "never" && "${expires}" < "${today}" ]] && continue
     if retry_command probe_socks5_once "${host}" "${socks_port}" "${user}" "${password}" "${check_url}"; then
       summary+=("ISP-${id} SOCKS5 出口正常")
     else
@@ -2047,7 +2049,7 @@ export async function onRequest(context) {
   const requestedIsp = url.searchParams.get('isp');
   const today = new Date().toISOString().slice(0, 10);
   const allEntries = JSON.parse(atob('ISP_PUBLIC_LIST_BASE64_PLACEHOLDER'));
-  const activeEntries = allEntries.filter((entry) => entry.expires >= today);
+  const activeEntries = allEntries.filter((entry) => entry.expires === 'never' || entry.expires >= today);
   const entries = requestedIsp
     ? activeEntries.filter((entry) => entry.id === requestedIsp)
     : activeEntries;
@@ -2062,8 +2064,9 @@ export async function onRequest(context) {
   ]);
 
   const uriList = nodes.join('\n');
-  const expire = entries.length > 0
-    ? Math.floor(new Date(`${entries.map((entry) => entry.expires).sort()[0]}T23:59:59Z`).getTime() / 1000)
+  const finiteExpiries = entries.map((entry) => entry.expires).filter((expires) => expires !== 'never');
+  const expire = finiteExpiries.length > 0
+    ? Math.floor(new Date(`${finiteExpiries.sort()[0]}T23:59:59Z`).getTime() / 1000)
     : 0;
   const profileName = requestedIsp || 'all-isps';
   const profileHeaders = {
@@ -2160,7 +2163,7 @@ export async function onRequest(context) {
   const requestedIsp = url.searchParams.get('isp');
   const today = new Date().toISOString().slice(0, 10);
   const allEntries = JSON.parse(atob('ISP_PUBLIC_LIST_BASE64_PLACEHOLDER'));
-  const activeEntries = allEntries.filter((entry) => entry.expires >= today);
+  const activeEntries = allEntries.filter((entry) => entry.expires === 'never' || entry.expires >= today);
   const entries = requestedIsp
     ? activeEntries.filter((entry) => entry.id === requestedIsp)
     : activeEntries;
@@ -2534,8 +2537,9 @@ ${txBulkRuleLines}
     - 'MATCH,🐟 漏网之鱼'
 
 `;
-  const expire = entries.length > 0
-    ? Math.floor(new Date(`${entries.map((entry) => entry.expires).sort()[0]}T23:59:59Z`).getTime() / 1000)
+  const finiteExpiries = entries.map((entry) => entry.expires).filter((expires) => expires !== 'never');
+  const expire = finiteExpiries.length > 0
+    ? Math.floor(new Date(`${finiteExpiries.sort()[0]}T23:59:59Z`).getTime() / 1000)
     : 0;
   const profileName = requestedIsp || 'all-isps';
   return new Response(config, {
@@ -2589,7 +2593,7 @@ const txOverlayDomains = new Set(TX_BULK_DOMAINS);
 
 const today = new Date().toISOString().slice(0, 10);
 const ispEntries = JSON.parse(atob("ISP_PUBLIC_LIST_BASE64_PLACEHOLDER"))
-  .filter((entry) => entry.expires >= today);
+  .filter((entry) => entry.expires === 'never' || entry.expires >= today);
 const injectedProxies = ispEntries.flatMap((entry) => [
   {
     name: `T-${entry.id}-TJ`,

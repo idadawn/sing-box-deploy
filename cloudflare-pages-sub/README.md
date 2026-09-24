@@ -8,6 +8,7 @@
 - 启用 `TX_DIRECT_ENABLED` 后，主页节点列表追加“TX 直出”，`?isp=tx` 可直接选中；对应 Clash `/tx`、v2ray/Shadowrocket `/tx-v2`，不加入原 ISP 订阅或容灾组。
 - 单 ISP 订阅同时返回 `Profile-Title: <编号>`、`Profile-Update-Interval: 24` 与无引号、无扩展名的 `filename=<编号>`/`filename*`，兼容采用不同响应头命名的客户端
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
+- 私有清单到期时间为 `never` 的 ISP 不因日期被过滤，单独订阅返回 `expire=0`，首页显示“有效期不限”；混合订阅的到期提示取最早的有限日期。
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - Hysteria2 默认不声明固定上下行带宽，由客户端和服务端使用自适应拥塞控制
 - 直连 `/c` 订阅的交互策略组使用 Hysteria2 优先的 `fallback`，`TX 大流量` 组仍优先 Trojan/TCP；`♻️ 自动选择` 名称仅为兼容已保存选择

@@ -665,7 +665,8 @@
     }
 
     function expiryText(entry) {
-      return entry.kind === 'tx-direct' ? '不受 ISP 到期影响' : `到期 ${entry.expires}`;
+      if (entry.kind === 'tx-direct') return '不受 ISP 到期影响';
+      return entry.expires === 'never' ? '有效期不限' : `到期 ${entry.expires}`;
     }
 
     function selectSubscription(id, updateHistory = true) {

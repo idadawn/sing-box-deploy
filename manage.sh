@@ -131,7 +131,7 @@ check_proxy_ip() {
         expires="${expires%$'\r'}"
         [[ -z "${id}${host}${http_port}${socks_port}${user}${password}${expires}${extra}" ]] && continue
         [[ "${id:0:1}" == "#" || "${id}" == "编号" || "${id,,}" == "id" ]] && continue
-        if [[ "${expires}" < "${today}" ]]; then
+        if [[ "${expires}" != "never" && "${expires}" < "${today}" ]]; then
             echo -e "${YELLOW}${id}: 已到期 (${expires})，跳过${NC}"
             continue
         fi
