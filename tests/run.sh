@@ -360,6 +360,47 @@ if (( BASH_VERSINFO[0] >= 4 )) && date -u -d '2099-01-01' +%F >/dev/null 2>&1; t
         exit 1
       fi
     done
+
+    # A sixth historical slot exceeds the UDP port range. Explicit ports must
+    # fix that slot without renumbering earlier active or expired entries.
+    TROJAN_PORT=14687
+    HYSTERIA_PORT=19623
+    ISP_PORT_STEP=10000
+    : > "${ISP_LIST_FILE}"
+    for id in retired-a retired-b retired-c dawn zw new-isp; do
+      expiry=never
+      [[ "${id}" != retired-* ]] || expiry=2000-01-01
+      printf '%s\t203.0.113.1\t3128\t1080\tuser\tpass\t%s\n' "${id}" "${expiry}" >> "${ISP_LIST_FILE}"
+    done
+    ISP_PORT_OVERRIDES='{}'
+    if (load_isp_list) >/dev/null 2>&1; then
+      echo 'Expected sequential port overflow to be rejected' >&2
+      exit 1
+    fi
+    ISP_PORT_OVERRIDES='{"new-isp":{"trojan":64687,"hysteria":64688}}'
+    load_isp_list
+    [[ "${ISP_IDS[*]}" == 'dawn zw new-isp' ]]
+    [[ "${ISP_TROJAN_PORTS[*]}" == '44687 54687 64687' ]]
+    [[ "${ISP_HYSTERIA_PORTS[*]}" == '49623 59623 64688' ]]
+    build_isp_json
+    jq -e 'map(select(.id == "new-isp"))[0] | .trojan_port == 64687 and .hysteria_port == 64688' <<< "${ISP_PUBLIC_LIST_JSON}" >/dev/null
+    for invalid_overrides in \
+      'not-json' \
+      '[]' \
+      '{"new-isp":{"trojan":64687}}' \
+      '{"new-isp":{"trojan":"64687","hysteria":64688}}' \
+      '{"new-isp":{"trojan":0,"hysteria":64688}}' \
+      '{"new-isp":{"trojan":65536,"hysteria":64688}}' \
+      '{"new-isp":{"trojan":64687.5,"hysteria":64688}}' \
+      '{"new-isp":{"trojan":64687,"hysteria":64687}}' \
+      '{"new-isp":{"trojan":44687,"hysteria":64688}}' \
+      '{"new-isp":{"trojan":64687,"hysteria":64688},"unknown":{"trojan":62000,"hysteria":62001}}'; do
+      ISP_PORT_OVERRIDES="${invalid_overrides}"
+      if (load_isp_list) >/dev/null 2>&1; then
+        echo 'Expected invalid/colliding port override to be rejected' >&2
+        exit 1
+      fi
+    done
   )
 fi
 

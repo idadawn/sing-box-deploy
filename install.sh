@@ -609,6 +609,28 @@ load_isp_list() {
     exit 1
   }
 
+  local port_overrides="${ISP_PORT_OVERRIDES:-}"
+  local has_port_overrides=0
+  [[ -n "${port_overrides}" ]] || port_overrides='{}'
+  # Keep the default validation path dependency-free on fresh installations.
+  if [[ "${port_overrides}" != '{}' ]]; then
+    command -v jq >/dev/null 2>&1 || {
+      log_error "使用 ISP_PORT_OVERRIDES 前需要安装 jq"
+      exit 1
+    }
+    if ! jq -e '
+    type == "object" and all(to_entries[];
+      (.key | test("^[A-Za-z0-9][A-Za-z0-9_-]*$")) and
+      (.value | type == "object" and keys == ["hysteria", "trojan"] and
+        all(.[]; type == "number" and floor == . and . >= 1 and . <= 65535))
+    )
+    ' <<< "${port_overrides}" >/dev/null 2>&1; then
+      log_error "ISP_PORT_OVERRIDES 必须将 ISP 编号映射到 trojan/hysteria 两个 1-65535 整数端口"
+      exit 1
+    fi
+    has_port_overrides=1
+  fi
+
   ISP_IDS=()
   ISP_HOSTS=()
   ISP_HTTP_PORTS=()
@@ -621,7 +643,7 @@ load_isp_list() {
 
   local today slot=0 line_number=0
   local id host http_port socks_port user password expires extra
-  local trojan_port hysteria_port
+  local trojan_port hysteria_port override_ports override_id
   local -A seen_ids=()
   local -A seen_client_ports=()
   today="$(date -u +%F)"
@@ -661,8 +683,18 @@ load_isp_list() {
       }
     fi
 
-    trojan_port=$((TROJAN_PORT + slot * ISP_PORT_STEP))
-    hysteria_port=$((HYSTERIA_PORT + slot * ISP_PORT_STEP))
+    override_ports=""
+    if (( has_port_overrides )); then
+      override_ports=$(jq -r --arg id "${id}" '
+        if has($id) then [.[$id].trojan, .[$id].hysteria] | @tsv else empty end
+      ' <<< "${port_overrides}")
+    fi
+    if [[ -n "${override_ports}" ]]; then
+      IFS=$'\t' read -r trojan_port hysteria_port <<< "${override_ports}"
+    else
+      trojan_port=$((TROJAN_PORT + slot * ISP_PORT_STEP))
+      hysteria_port=$((HYSTERIA_PORT + slot * ISP_PORT_STEP))
+    fi
     validate_port "ISP ${id} TROJAN_PORT" "${trojan_port}"
     validate_port "ISP ${id} HYSTERIA_PORT" "${hysteria_port}"
     for client_port in "${trojan_port}" "${hysteria_port}"; do
@@ -689,6 +721,15 @@ load_isp_list() {
     ISP_TROJAN_PORTS+=("${trojan_port}")
     ISP_HYSTERIA_PORTS+=("${hysteria_port}")
   done < "${ISP_LIST_FILE}"
+
+  if (( has_port_overrides )); then
+    while IFS= read -r override_id; do
+      [[ -n "${seen_ids[${override_id}]:-}" ]] || {
+        log_error "ISP_PORT_OVERRIDES 引用了清单中不存在的编号: ${override_id}"
+        exit 1
+      }
+    done < <(jq -r 'keys[]' <<< "${port_overrides}")
+  fi
 
   ISP_COUNT="${#ISP_IDS[@]}"
   (( ISP_COUNT > 0 )) || {

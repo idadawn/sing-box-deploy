@@ -131,6 +131,10 @@ Trojan 端口    = TROJAN_PORT + 行槽位 × ISP_PORT_STEP
 Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 ```
 
+递增结果接近 65535 时，可在 `.env` 用 `ISP_PORT_OVERRIDES` 为新编号固定端口，例如
+`ISP_PORT_OVERRIDES='{"new-isp":{"trojan":64687,"hysteria":64688}}'`。
+被覆盖的条目仍占据原行槽位，其他节点端口不变。必须同时提供两个整数端口；未知编号、越界、重复端口或与启用的 TX 端口冲突会阻止部署。发布订阅和服务端生成共用此映射，云防火墙也需放行对应 TCP/UDP 端口。
+
 ## 核心配置
 
 ### 独立 TX 公网出口订阅
