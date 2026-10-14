@@ -47,6 +47,8 @@ DEFAULT_AI_ISP_DOMAINS+=",mistral.ai,cohere.com,cohere.ai,groq.com,groqcloud.com
 DEFAULT_AI_ISP_DOMAINS+=",replicate.com,replicate.delivery,stability.ai,midjourney.com,cursor.com,cursor.sh,codeium.com,windsurf.com"
 DEFAULT_AI_ISP_DOMAINS+=",qwen.ai,dashscope.aliyuncs.com,tavily.com,exa.ai"
 
+DEFAULT_PAYPAL_ISP_DOMAINS="paypal.com,paypalobjects.com,paypal.me,paypal.cn,paypal.com.cn"
+
 DEFAULT_DIRECT_BULK_DOMAINS="youtube.com,youtu.be,youtube-nocookie.com,googlevideo.com,ytimg.com,youtubei.googleapis.com,ggpht.com"
 DEFAULT_DIRECT_BULK_DOMAINS+=",twitch.tv,ttvnw.net,jtvnw.net,vimeo.com,vimeocdn.com,dailymotion.com,dmcdn.net"
 DEFAULT_DIRECT_BULK_DOMAINS+=",rou.video,rn221.xyz,rn227.xyz,rn248.xyz"
@@ -998,6 +1000,7 @@ generate_config() {
     --arg hy2_password "${HYSTERIA_PASSWORD}" \
     --arg hy2_obfs_password "${HYSTERIA_OBFS_PASSWORD}" \
     --arg ai_isp_domains "${AI_ISP_DOMAINS}" \
+    --arg paypal_isp_domains "${DEFAULT_PAYPAL_ISP_DOMAINS}" \
     --arg direct_bulk_domains "${DIRECT_BULK_DOMAINS}" \
     --arg direct_bulk_ip_cidrs "${DIRECT_BULK_IP_CIDRS}" \
     --argjson isps "${ISP_LIST_JSON}" \
@@ -1030,8 +1033,8 @@ generate_config() {
     def client_inbounds:
       [$isps[] | "trojan-\(.id)-in", "hy2-\(.id)-in"];
 
-    def ai_isp_rules:
-      domain_list($ai_isp_domains) as $domains
+    def fixed_isp_rules:
+      domain_list($ai_isp_domains + "," + $paypal_isp_domains) as $domains
       | if ($domains | length) > 0 then
           [$isps[] | {
             inbound: ["trojan-\(.id)-in", "hy2-\(.id)-in"],
@@ -1189,7 +1192,7 @@ generate_config() {
             {
               action: "sniff"
             }
-          ] + ai_isp_rules + direct_bulk_rules +
+          ] + fixed_isp_rules + direct_bulk_rules +
           [$isps[] | {
             inbound: ["trojan-\(.id)-in", "hy2-\(.id)-in"],
             outbound: "isp-out-\(.id)"
@@ -2222,6 +2225,7 @@ export async function onRequest(context) {
     .map((domain) => domain.trim())
     .filter(Boolean);
   const aiIspDomains = decodeDomainList("AI_ISP_DOMAINS_BASE64_PLACEHOLDER");
+  const paypalIspDomains = PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER;
   const txBulkDomains = DIRECT_BULK_ENABLED_PLACEHOLDER
     ? decodeDomainList("DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER")
     : [];
@@ -2279,6 +2283,14 @@ export async function onRequest(context) {
   const telegramRuleTarget = telegramDirectEnabled ? "📦 TX 大流量" : "📲 电报信息";
   const aiRuleLines = aiIspDomains
     .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},🤖 AI 服务'`)
+    .join('\n');
+  const paypalRuleLines = paypalIspDomains
+    .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},🛡️ ISP 出口自动'`)
+    .join('\n');
+  const paypalDnsPolicyLines = paypalIspDomains
+    .map((domain) => `    "+.${domain}":
+      - "https://1.1.1.1/dns-query#🛡️ ISP 出口自动"
+      - "https://8.8.8.8/dns-query#🛡️ ISP 出口自动"`)
     .join('\n');
   const txBulkRuleLines = txBulkDomains
     .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},📦 TX 大流量'`)
@@ -2355,6 +2367,7 @@ dns:
     - "https://1.1.1.1/dns-query#🛡️ 自动容灾"
     - "https://8.8.8.8/dns-query#🛡️ 自动容灾"
   nameserver-policy:
+${paypalDnsPolicyLines}
     "geosite:cn,private":
       - "https://doh.pub/dns-query#DIRECT"
       - "https://dns.alidns.com/dns-query#DIRECT"
@@ -2537,6 +2550,7 @@ ${fallbackProxyLines}
 rules:
 ${clientDirectIpRuleLines}
 ${forceTcpRuleLines}
+${paypalRuleLines}
 ${aiRuleLines}
 ${txBulkRuleLines}
 
@@ -2610,6 +2624,7 @@ const CUSTOM_GROUP_NAMES = new Set([
 ]);
 
 const AI_ISP_DOMAINS = AI_ISP_DOMAINS_JSON_PLACEHOLDER;
+const PAYPAL_ISP_DOMAINS = PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER;
 const TX_BULK_DOMAINS = DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER;
 const DIRECT_BULK_APPS = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
 const CLIENT_DIRECT_IP_CIDRS = CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER;
@@ -2629,7 +2644,7 @@ const IP_CHECK_DOMAINS = [
   "icanhazip.com",
 ];
 const RULESET_BASE_URL = "CLASH_RULESET_BASE_URL_PLACEHOLDER";
-const finalOverlayDomains = new Set([...AI_ISP_DOMAINS, ...IP_CHECK_DOMAINS]);
+const finalOverlayDomains = new Set([...AI_ISP_DOMAINS, ...PAYPAL_ISP_DOMAINS, ...IP_CHECK_DOMAINS]);
 const txOverlayDomains = new Set(TX_BULK_DOMAINS);
 
 const today = new Date().toISOString().slice(0, 10);
@@ -2807,6 +2822,10 @@ function main(config) {
       : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"],
     "nameserver-policy": {
       ...sourceDnsPolicy,
+      ...Object.fromEntries(PAYPAL_ISP_DOMAINS.map((domain) => [`+.${domain}`, [
+        `https://1.1.1.1/dns-query#${FINAL_GROUP_NAME}`,
+        `https://8.8.8.8/dns-query#${FINAL_GROUP_NAME}`,
+      ]])),
       "geosite:gfw": [
         `https://1.1.1.1/dns-query#${FINAL_GROUP_NAME}`,
         `https://8.8.8.8/dns-query#${FINAL_GROUP_NAME}`,
@@ -2830,6 +2849,7 @@ function main(config) {
         (domain) => `AND,((NETWORK,UDP),(DST-PORT,443),(DOMAIN-SUFFIX,${domain})),REJECT`,
       )
       : []),
+    ...PAYPAL_ISP_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
     ...AI_ISP_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
     ...IP_CHECK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${FINAL_GROUP_NAME}`),
     ...TX_BULK_DOMAINS.map((domain) => `DOMAIN-SUFFIX,${domain},${TX_GROUP_NAME}`),
@@ -2873,6 +2893,7 @@ GLOBALJS
   local client_direct_ip_cidrs_base64
   local force_tcp_domains_base64
   local ai_isp_domains_json
+  local paypal_isp_domains_json
   local direct_bulk_domains_json='[]'
   local direct_bulk_apps_json='[]'
   local client_direct_ip_cidrs_json
@@ -2885,6 +2906,7 @@ GLOBALJS
   client_direct_ip_cidrs_base64=$(printf '%s' "${CLIENT_DIRECT_IP_CIDRS}" | base64 | tr -d '\n')
   force_tcp_domains_base64=$(printf '%s' "${CLASH_FORCE_TCP_DOMAINS}" | base64 | tr -d '\n')
   ai_isp_domains_json=$(jq -cn --arg domains "${AI_ISP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
+  paypal_isp_domains_json=$(jq -cn --arg domains "${DEFAULT_PAYPAL_ISP_DOMAINS}" '$domains | split(",")')
   client_direct_ip_cidrs_json=$(jq -cn --arg cidrs "${CLIENT_DIRECT_IP_CIDRS}" '$cidrs | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   force_tcp_domains_json=$(jq -cn --arg domains "${CLASH_FORCE_TCP_DOMAINS}" '$domains | gsub("[\\n\\t ]+"; ",") | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | unique')
   if is_true "${DIRECT_BULK_ENABLED}"; then
@@ -2909,6 +2931,7 @@ GLOBALJS
   sed -i "s|HYSTERIA_PASSWORD_PLACEHOLDER|${HYSTERIA_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|HYSTERIA_OBFS_PLACEHOLDER|${HYSTERIA_OBFS_PASSWORD}|g" "${functions_dir}/c.js"
   sed -i "s|AI_ISP_DOMAINS_BASE64_PLACEHOLDER|${ai_isp_domains_base64}|g" "${functions_dir}/c.js"
+  sed -i "s|PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER|${paypal_isp_domains_json}|g" "${functions_dir}/c.js"
   sed -i "s|DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER|${direct_bulk_domains_base64}|g" "${functions_dir}/c.js"
   sed -i "s|CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER|${client_direct_ip_cidrs_base64}|g" "${functions_dir}/c.js"
   sed -i "s|CLASH_FORCE_TCP_DOMAINS_BASE64_PLACEHOLDER|${force_tcp_domains_base64}|g" "${functions_dir}/c.js"
@@ -2922,6 +2945,7 @@ GLOBALJS
   sed -i "s|HYSTERIA_DOWN_PLACEHOLDER|${HYSTERIA_DOWN_MBPS}|g" "${functions_dir}/c.js"
 
   sed -i "s|AI_ISP_DOMAINS_JSON_PLACEHOLDER|${ai_isp_domains_json}|g" "${pages_dir}/global-extension.js"
+  sed -i "s|PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER|${paypal_isp_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|${direct_bulk_domains_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|DIRECT_BULK_APPS_JSON_PLACEHOLDER|${direct_bulk_apps_json}|g" "${pages_dir}/global-extension.js"
   sed -i "s|CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER|${client_direct_ip_cidrs_json}|g" "${pages_dir}/global-extension.js"

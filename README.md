@@ -9,6 +9,7 @@
 ## 设计目标
 
 - 一个 ISP 编号对应一个固定出口，不在不同 ISP 之间自动切换。
+- PayPal 的 `paypal.com`、`paypalobjects.com`、`paypal.me`、`paypal.cn`、`paypal.com.cn` 及子域名在 ISP 订阅中优先走 ISP 专用组，其 DNS 也经该组查询；服务端优先固定到入站对应 ISP，覆盖大流量直出规则。独立 `/tx` 订阅仍只有 TX 公网出口。
 - 同时提供 Trojan/TCP 与 Hysteria2/UDP，覆盖不同网络条件。
 - 默认失败关闭：未命中明确规则的服务端流量由 `route.final=block` 拒绝。
 - ISP 地址、账号和密码只保存在服务器本地私有 TSV 文件中。

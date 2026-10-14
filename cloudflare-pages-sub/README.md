@@ -10,6 +10,7 @@
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - 私有清单到期时间为 `never` 的 ISP 不因日期被过滤，单独订阅返回 `expire=0`，首页显示“有效期不限”；混合订阅的到期提示取最早的有限日期。
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
+- `/c` 和全局扩展为 PayPal 官网、API、静态资源、PayPal.Me 及中国站设置优先 ISP 规则和代理 DNS，使用 `paypal.com`、`paypalobjects.com`、`paypal.me`、`paypal.cn`、`paypal.com.cn` 域名后缀；独立 `/tx` 不加入 ISP 节点。
 - Hysteria2 默认不声明固定上下行带宽，由客户端和服务端使用自适应拥塞控制
 - 直连 `/c` 订阅的交互策略组使用 Hysteria2 优先的 `fallback`，`TX 大流量` 组仍优先 Trojan/TCP；`♻️ 自动选择` 名称仅为兼容已保存选择
 - Apple 策略组默认直连且保留手动代理选项；已保存的历史选择可能需要手动切回 `DIRECT`

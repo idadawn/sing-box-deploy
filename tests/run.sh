@@ -95,6 +95,7 @@ render_js_template() {
     -e 's/DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER/YnVsay5leGFtcGxl/g' \
     -e 's/CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER/MjAzLjAuMTEzLjQyLzMy/g' \
     -e 's|AI_ISP_DOMAINS_JSON_PLACEHOLDER|["ai.example"]|g' \
+    -e 's|PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER|["paypal.com","paypalobjects.com","paypal.me","paypal.cn","paypal.com.cn"]|g' \
     -e 's|DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER|["bulk.example"]|g' \
     -e 's/DIRECT_BULK_APPS_JSON_PLACEHOLDER/[]/g' \
     -e 's|CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER|["203.0.113.42/32"]|g' \
@@ -182,6 +183,14 @@ assert.doesNotMatch(defaultResolvers, /doh\.pub|alidns|DIRECT/);
 assert.match(dnsBlock, /"geosite:cn,private":\n      - "https:\/\/doh\.pub\/dns-query#DIRECT"\n      - "https:\/\/dns\.alidns\.com\/dns-query#DIRECT"/);
 assert.match(dnsBlock, /\n  fallback: \[\]/);
 assert.doesNotMatch(dnsBlock, /fallback-filter:|geosite:gfw/);
+const paypalDomains = ['paypal.com', 'paypalobjects.com', 'paypal.me', 'paypal.cn', 'paypal.com.cn'];
+for (const domain of paypalDomains) {
+  const rule = `- 'DOMAIN-SUFFIX,${domain},🛡️ ISP 出口自动'`;
+  assert.ok(clashBody.includes(rule));
+  assert.ok(clashBody.indexOf(rule) < clashBody.indexOf("DOMAIN-SUFFIX,bulk.example,📦 TX 大流量"));
+  assert.ok(clashBody.indexOf(rule) < clashBody.indexOf('RULE-SET,loyalsoldier-applications,DIRECT'));
+  assert.ok(dnsBlock.includes(`"+.${domain}":\n      - "https://1.1.1.1/dns-query#🛡️ ISP 出口自动"`));
+}
 assert.match(clashBody, /tun:\n  mtu: 1400/);
 assert.doesNotMatch(clashBody, /type: url-test/);
 assert.doesNotMatch(clashBody, /tls:\/\/1\.1\.1\.1|tls:\/\/8\.8\.4\.4/);
@@ -259,10 +268,10 @@ const globalConfig = globalMain({
   dns: {
     enable: true,
     nameserver: ["https://resolver.example/dns-query"],
-    "nameserver-policy": {"custom.example": "192.0.2.53"},
+    "nameserver-policy": {"custom.example": "192.0.2.53", "+.paypal.cn": "192.0.2.53"},
   },
   tun: {enable: true, stack: "system", mtu: 1500},
-  rules: ["DOMAIN-SUFFIX,airport.example,DIRECT", "MATCH,DIRECT"],
+  rules: ["DOMAIN-SUFFIX,paypal.com,DIRECT", "DOMAIN-SUFFIX,airport.example,DIRECT", "MATCH,DIRECT"],
 });
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const globalClientDirectRuleIndex = globalConfig.rules.indexOf(clientDirectRule);
@@ -278,6 +287,15 @@ assert.equal(globalConfig.dns.enable, true);
 assert.deepEqual(plain(globalConfig.dns.nameserver), ["https://resolver.example/dns-query"]);
 assert.equal(globalConfig.dns["respect-rules"], true);
 assert.equal(globalConfig.dns["nameserver-policy"]["custom.example"], "192.0.2.53");
+for (const domain of paypalDomains) {
+  const rule = `DOMAIN-SUFFIX,${domain},🛡️ ISP 最终出口`;
+  assert.ok(globalConfig.rules.includes(rule));
+  assert.ok(globalConfig.rules.indexOf(rule) < globalConfig.rules.indexOf('RULE-SET,loyalsoldier-applications,DIRECT'));
+  assert.ok(globalConfig.rules.indexOf(rule) < globalConfig.rules.indexOf('DOMAIN-SUFFIX,paypal.com,DIRECT'));
+  assert.deepEqual(plain(globalConfig.dns['nameserver-policy'][`+.${domain}`]), [
+    'https://1.1.1.1/dns-query#🛡️ ISP 最终出口', 'https://8.8.8.8/dns-query#🛡️ ISP 最终出口',
+  ]);
+}
 assert.deepEqual(plain(globalConfig.dns["nameserver-policy"]["geosite:gfw"]), [
   "https://1.1.1.1/dns-query#🛡️ ISP 最终出口",
   "https://8.8.8.8/dns-query#🛡️ ISP 最终出口",
@@ -400,6 +418,34 @@ if (( BASH_VERSINFO[0] >= 4 )) && date -u -d '2099-01-01' +%F >/dev/null 2>&1; t
         echo 'Expected invalid/colliding port override to be rejected' >&2
         exit 1
       fi
+    done
+    ISP_PORT_OVERRIDES='{"new-isp":{"trojan":64687,"hysteria":64688}}'
+    load_isp_list
+    LOG_LEVEL=error
+    TROJAN_DOMAIN=tj.example.com
+    HYSTERIA_DOMAIN=hy.example.com
+    ACME_EMAIL=test@example.com
+    CF_DNS_EDIT_TOKEN=test-token
+    TROJAN_PASSWORD=test-trojan
+    HYSTERIA_PASSWORD=test-hysteria
+    HYSTERIA_OBFS_PASSWORD=test-obfs
+    AI_ISP_DOMAINS=ai.example
+    DIRECT_BULK_ENABLED=true
+    DIRECT_BULK_DOMAINS=paypal.com,bulk.example
+    DIRECT_BULK_IP_CIDRS=''
+    HYSTERIA_CC_MODE=bbr
+    HYSTERIA_UP_MBPS=100
+    HYSTERIA_DOWN_MBPS=100
+    ENABLE_TCP_FAST_OPEN=true
+    generate_config
+    for id in dawn zw new-isp; do
+      for protocol in trojan hy2; do
+        for domain in paypal.com paypalobjects.com paypal.me paypal.cn paypal.com.cn; do
+          jq -e --arg inbound "${protocol}-${id}-in" --arg outbound "isp-out-${id}" --arg domain "${domain}" '
+            [.route.rules[] | select(((.inbound // []) | index($inbound)) and ((.domain_suffix // []) | index($domain)))][0].outbound == $outbound
+          ' "${TMP_CONFIG}" >/dev/null
+        done
+      done
     done
   )
 fi

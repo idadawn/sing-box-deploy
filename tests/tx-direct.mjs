@@ -51,6 +51,7 @@ assert.doesNotMatch(defaultResolvers, /doh\.pub|alidns|DIRECT/);
 assert.match(yaml, /"geosite:cn,private":/);
 assert.match(yaml, /\n  fallback: \[\]/);
 assert.doesNotMatch(yaml, /skip-cert-verify: true|ISP 出口|T-ds-|T-dawn/);
+assert.doesNotMatch(yaml, /DOMAIN-SUFFIX,paypal|"\+\.paypal/);
 for (const cidr of cidrs) {
   const rule = `IP-CIDR,${cidr},DIRECT,no-resolve`;
   assert.ok(yaml.indexOf(rule) > 0, `missing ${rule}`);

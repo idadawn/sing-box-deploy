@@ -101,6 +101,8 @@ export function renderPages(source, env) {
     HYSTERIA_OBFS_PLACEHOLDER: env.TX_DIRECT_OBFS_PASSWORD,
     CLIENT_DIRECT_IP_CIDRS_BASE64_PLACEHOLDER: b64(cidrs.join(',')),
     AI_ISP_DOMAINS_BASE64_PLACEHOLDER: b64(env.AI_ISP_DOMAINS || ''),
+    // This independent profile has no ISP nodes to route PayPal through.
+    PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER: '[]',
     DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER: b64(env.DIRECT_BULK_DOMAINS || ''),
     DIRECT_BULK_ENABLED_PLACEHOLDER: 'true',
     DIRECT_BULK_APPS_JSON_PLACEHOLDER: '["telegram"]',
