@@ -138,6 +138,17 @@ Hysteria2 端口 = HYSTERIA_PORT + 行槽位 × ISP_PORT_STEP
 
 ## 核心配置
 
+### 按 ISP 分批迁移入口
+
+`ISP_INGRESS_OVERRIDES` 只覆盖指定有效 ISP 的客户端接入地址和 TLS SNI，统一作用于 `/v2`、`/c` 和 `/s`。未指定的编号继续使用原始 `TROJAN_DOMAIN`、`HYSTERIA_DOMAIN`；端口、节点名、凭据以及固定出口映射不变，也不会新增公网或跨 ISP 回落。
+
+```bash
+ISP_INGRESS_OVERRIDES='{"demo":{"server":"new.example.com","sni":"new.example.com"}}'
+sudo ./install.sh --pages-only
+```
+
+先在目标服务器部署所选 ISP，分别验证 Trojan/TCP、Hysteria2/UDP、TLS 证书及实际出口 IP，然后发布覆盖配置。核验正式订阅后再迁移其他编号。回退时删除对应覆盖项并重新发布；旧入口应保留到客户端完成订阅更新。此选项不负责复制服务端配置或证书，目标服务器仍必须满足其部署方式要求。
+
 ### 独立 TX 公网出口订阅
 
 需要单独使用 TX 的公网 IP 时，设置 `.env` 中的 `TX_DIRECT_ENABLED=true`、
