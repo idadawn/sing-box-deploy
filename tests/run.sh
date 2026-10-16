@@ -75,6 +75,23 @@ if (
   exit 1
 fi
 
+(
+  source "${ROOT_DIR}/install.sh"
+  ISP_PUBLIC_LIST_JSON='[{"id":"pilot","trojan_port":64689,"hysteria_port":64690},{"id":"untouched","trojan_port":443,"hysteria_port":8443}]'
+  ISP_INGRESS_OVERRIDES='{"pilot":{"server":"new.example.com","sni":"cert.example.com"}}'
+  apply_isp_ingress_overrides
+  jq -e '.[0].ingress.server == "new.example.com" and .[0].trojan_port == 64689 and (.[1] | has("ingress") | not)' <<< "${ISP_PUBLIC_LIST_JSON}" >/dev/null
+  for invalid in \
+    '{"unknown":{"server":"new.example.com","sni":"cert.example.com"}}' \
+    '{"pilot":{"server":"new.example.com","sni":"cert.example.com","trojan_port":22}}' \
+    '{"pilot":{"server":"bad host","sni":"cert.example.com"}}'; do
+    if (ISP_INGRESS_OVERRIDES="${invalid}"; apply_isp_ingress_overrides) >/dev/null 2>&1; then
+      echo "Expected invalid ingress override to be rejected" >&2
+      exit 1
+    fi
+  done
+)
+
 extract_heredoc() {
   local start="$1"
   local end="$2"
@@ -131,6 +148,7 @@ if command -v node >/dev/null 2>&1; then
   node --check "${TMP_DIR}/c-disabled.mjs"
   node --check "${TMP_DIR}/global-disabled.mjs"
   node "${ROOT_DIR}/tests/non-expiring.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
+  node "${ROOT_DIR}/tests/ingress-overrides.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node --input-type=module - "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/sr.mjs" "${TMP_DIR}/global.mjs" "${TMP_DIR}/c-disabled.mjs" "${TMP_DIR}/global-disabled.mjs" <<'NODE'
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";

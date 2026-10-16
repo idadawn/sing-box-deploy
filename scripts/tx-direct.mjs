@@ -91,7 +91,7 @@ export function renderPages(source, env) {
     return source.slice(offset, end);
   };
   const entries = [{ id: 'tx', host: env.TX_DIRECT_IP, expires: '9999-12-31',
-    trojan_port: trojan, hysteria_port: hysteria }];
+    trojan_port: trojan, hysteria_port: hysteria, ingress: { server: env.TX_DIRECT_IP } }];
   const replacements = {
     ISP_PUBLIC_LIST_BASE64_PLACEHOLDER: b64(JSON.stringify(entries)),
     TROJAN_DOMAIN_PLACEHOLDER: env.TROJAN_DOMAIN,
@@ -118,11 +118,7 @@ export function renderPages(source, env) {
     for (const [key, value] of Object.entries(replacements)) code = code.replaceAll(key, value || '');
     if (/[A-Z][A-Z0-9_]*_PLACEHOLDER/.test(code)) throw new Error('Unresolved TX template placeholder');
     // IP is the entry address; domain SNI still provides normal TLS validation.
-    code = code.replaceAll(`@${env.TROJAN_DOMAIN}:`, `@${env.TX_DIRECT_IP}:`)
-      .replaceAll(`@${env.HYSTERIA_DOMAIN}:`, `@${env.TX_DIRECT_IP}:`)
-      .replaceAll(`server: ${env.TROJAN_DOMAIN}\n`, `server: ${env.TX_DIRECT_IP}\n`)
-      .replaceAll(`server: ${env.HYSTERIA_DOMAIN}\n`, `server: ${env.TX_DIRECT_IP}\n`)
-      .replaceAll("requestedIsp || 'all-isps'", "'tx-direct'")
+    code = code.replaceAll("requestedIsp || 'all-isps'", "'tx-direct'")
       .replaceAll('expire=${expire}', 'expire=0')
       .replaceAll('🛡️ ISP 出口自动', '🛡️ TX 出口');
     return code + '\n';

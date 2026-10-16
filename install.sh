@@ -759,6 +759,26 @@ build_isp_json() {
       '$current + [{id: $id, host: $host, http_port: $http_port, socks_port: $socks_port, username: $username, password: $password, expires: $expires, trojan_port: $trojan_port, hysteria_port: $hysteria_port}]')
   done
   ISP_PUBLIC_LIST_JSON=$(jq -c 'map({id, host, expires, trojan_port, hysteria_port})' <<< "${ISP_LIST_JSON}")
+  apply_isp_ingress_overrides
+}
+
+apply_isp_ingress_overrides() {
+  local overrides="${ISP_INGRESS_OVERRIDES:-}"
+  [[ -n "${overrides}" ]] || overrides='{}'
+  if ! jq -e --argjson entries "${ISP_PUBLIC_LIST_JSON}" '
+    type == "object" and
+    ((keys - ($entries | map(.id))) | length == 0) and
+    all(.[]; type == "object" and keys == ["server", "sni"] and
+      all(.[]; type == "string" and length > 0 and
+        test("^[A-Za-z0-9][A-Za-z0-9.-]*$")))
+  ' <<< "${overrides}" >/dev/null 2>&1; then
+    log_error "ISP_INGRESS_OVERRIDES 必须将有效 ISP 编号映射到 server/sni 域名或 IPv4，不能包含未知字段"
+    return 1
+  fi
+  ISP_PUBLIC_LIST_JSON=$(jq -c --argjson overrides "${overrides}" '
+    map(. as $entry | if $overrides[$entry.id] then
+      . + {ingress: $overrides[$entry.id]} else . end)
+  ' <<< "${ISP_PUBLIC_LIST_JSON}")
 }
 
 validate_config() {
@@ -2103,8 +2123,8 @@ export async function onRequest(context) {
   }
 
   const nodes = entries.flatMap((entry) => [
-    `trojan://TROJAN_PASSWORD_PLACEHOLDER@TROJAN_DOMAIN_PLACEHOLDER:${entry.trojan_port}?security=tls&sni=TROJAN_DOMAIN_PLACEHOLDER&alpn=h2%2Chttp%2F1.1&fp=chrome#T-${entry.id}-TJ`,
-    `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@HYSTERIA_DOMAIN_PLACEHOLDER:${entry.hysteria_port}/?sni=HYSTERIA_DOMAIN_PLACEHOLDER&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#T-${entry.id}-HY2`,
+    `trojan://TROJAN_PASSWORD_PLACEHOLDER@${entry.ingress?.server || 'TROJAN_DOMAIN_PLACEHOLDER'}:${entry.trojan_port}?security=tls&sni=${entry.ingress?.sni || 'TROJAN_DOMAIN_PLACEHOLDER'}&alpn=h2%2Chttp%2F1.1&fp=chrome#T-${entry.id}-TJ`,
+    `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@${entry.ingress?.server || 'HYSTERIA_DOMAIN_PLACEHOLDER'}:${entry.hysteria_port}/?sni=${entry.ingress?.sni || 'HYSTERIA_DOMAIN_PLACEHOLDER'}&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#T-${entry.id}-HY2`,
   ]);
 
   const uriList = nodes.join('\n');
@@ -2245,11 +2265,11 @@ export async function onRequest(context) {
   const proxies = entries.flatMap((entry) => [
     `  - name: "T-${entry.id}-TJ"
     type: trojan
-    server: TROJAN_DOMAIN_PLACEHOLDER
+    server: ${entry.ingress?.server || 'TROJAN_DOMAIN_PLACEHOLDER'}
     port: ${entry.trojan_port}
     password: "TROJAN_PASSWORD_PLACEHOLDER"
     udp: true
-    sni: TROJAN_DOMAIN_PLACEHOLDER
+    sni: ${entry.ingress?.sni || 'TROJAN_DOMAIN_PLACEHOLDER'}
     alpn:
       - h2
       - http/1.1
@@ -2257,14 +2277,14 @@ export async function onRequest(context) {
     client-fingerprint: chrome`,
     `  - name: "T-${entry.id}-HY2"
     type: hysteria2
-    server: HYSTERIA_DOMAIN_PLACEHOLDER
+    server: ${entry.ingress?.server || 'HYSTERIA_DOMAIN_PLACEHOLDER'}
     port: ${entry.hysteria_port}
     password: "HYSTERIA_PASSWORD_PLACEHOLDER"
     obfs: salamander
     obfs-password: "HYSTERIA_OBFS_PLACEHOLDER"
     alpn:
       - h3
-    sni: HYSTERIA_DOMAIN_PLACEHOLDER
+    sni: ${entry.ingress?.sni || 'HYSTERIA_DOMAIN_PLACEHOLDER'}
     skip-cert-verify: false${hy2BandwidthLines}`,
   ]);
 
@@ -2654,11 +2674,11 @@ const injectedProxies = ispEntries.flatMap((entry) => [
   {
     name: `T-${entry.id}-TJ`,
     type: "trojan",
-    server: "TROJAN_DOMAIN_PLACEHOLDER",
+    server: entry.ingress?.server || "TROJAN_DOMAIN_PLACEHOLDER",
     port: entry.trojan_port,
     password: "TROJAN_PASSWORD_PLACEHOLDER",
     udp: true,
-    sni: "TROJAN_DOMAIN_PLACEHOLDER",
+    sni: entry.ingress?.sni || "TROJAN_DOMAIN_PLACEHOLDER",
     alpn: ["h2", "http/1.1"],
     "skip-cert-verify": false,
     "client-fingerprint": "chrome",
@@ -2666,13 +2686,13 @@ const injectedProxies = ispEntries.flatMap((entry) => [
   {
     name: `T-${entry.id}-HY2`,
     type: "hysteria2",
-    server: "HYSTERIA_DOMAIN_PLACEHOLDER",
+    server: entry.ingress?.server || "HYSTERIA_DOMAIN_PLACEHOLDER",
     port: entry.hysteria_port,
     password: "HYSTERIA_PASSWORD_PLACEHOLDER",
     obfs: "salamander",
     "obfs-password": "HYSTERIA_OBFS_PLACEHOLDER",
     alpn: ["h3"],
-    sni: "HYSTERIA_DOMAIN_PLACEHOLDER",
+    sni: entry.ingress?.sni || "HYSTERIA_DOMAIN_PLACEHOLDER",
     "skip-cert-verify": false,
     ...(HYSTERIA_USE_BBR
       ? {}
