@@ -9,12 +9,12 @@ async function api(path, data) {
   if (!response.ok) { const error = new Error(body.error || '请求失败'); error.status = response.status; throw error; }
   return body;
 }
-function linkRow(label, path) {
+function linkRow(label, path, { sensitive = true, copyLabel = '复制链接' } = {}) {
   const box = document.createElement('div'), title = document.createElement('h3'), row = document.createElement('div');
   title.textContent = label; row.className = 'link-row';
   const input = document.createElement('input'), button = document.createElement('button');
-  input.readOnly = true; input.type = 'password'; input.value = new URL(path, location.origin).href; input.setAttribute('aria-label', label + '专属链接');
-  button.type = 'button'; button.textContent = '复制链接';
+  input.readOnly = true; input.type = sensitive ? 'password' : 'text'; input.value = new URL(path, location.origin).href; input.setAttribute('aria-label', label + (sensitive ? '专属链接' : '链接'));
+  button.type = 'button'; button.textContent = copyLabel;
   button.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(input.value); message('链接已复制，可粘贴到客户端。'); }
     catch { input.type = 'text'; input.select(); message('请复制已选中的链接。'); }
@@ -28,12 +28,16 @@ function importActions(entry) {
   for (const [client, label, path, scheme] of [
     ['clash', '导入 Clash', entry.clash, 'clash://install-config'],
     ['v2rayng', '导入 v2rayNG', entry.v2, 'v2rayng://install-config/'],
+    ['shadowrocket', '导入 Shadowrocket', entry.shadowrocket || entry.v2, 'shadowrocket://add/sub://'],
   ]) {
     const link = document.createElement('a');
     const subscription = new URL(path, location.origin).href;
     link.className = 'client-import ' + client;
-    // Encode the whole personal URL so isp/token remain inside the URL parameter.
-    link.href = scheme + '?url=' + encodeURIComponent(subscription);
+    // Shadowrocket uses a Base64 remote subscription, not a one-off node import.
+    // Other clients need the whole personal URL encoded in a single URL parameter.
+    link.href = client === 'shadowrocket'
+      ? scheme + btoa(subscription) + '?remark=' + encodeURIComponent(name)
+      : scheme + '?url=' + encodeURIComponent(subscription);
     link.rel = 'noopener noreferrer';
     link.referrerPolicy = 'no-referrer';
     link.textContent = label;
@@ -53,7 +57,13 @@ async function load() {
     address.className = 'address'; address.textContent = entry.host || '';
     head.append(title, expiry); card.append(head, address, importActions(entry), linkRow('Clash Verge / Mihomo', entry.clash), linkRow('v2rayN / v2rayNG / Shadowrocket', entry.v2));
     if (entry.extension) card.append(linkRow('Clash Verge 全局扩展', entry.extension));
-    if (entry.shadowrocket_module) card.append(linkRow('Shadowrocket Telegram 模块', entry.shadowrocket_module));
+    if (entry.shadowrocket_module) {
+      const module = linkRow('Telegram 分流模块（可选）', entry.shadowrocket_module, { sensitive: false, copyLabel: '复制模块' });
+      const help = document.createElement('p');
+      help.className = 'hint';
+      help.textContent = '让 Telegram 优先走代理。在 Shadowrocket 的“配置 → 模块”中添加并启用；现有规则已能正常代理 Telegram 时可不添加。';
+      module.append(help); card.append(module);
+    }
     return card;
   }));
   view('accountView');

@@ -40,7 +40,9 @@ try {
     const repeated = await (await request('/api/me', cookie)).json();
     assert.deepEqual(repeated.entries, me.entries, 'Refreshing the portal must not rotate subscription URLs');
     for (const entry of me.entries) {
-      for (const field of ['clash', 'v2', 'extension'].filter(field => entry[field])) {
+      assert.equal(entry.shadowrocket, entry.v2, 'Shadowrocket uses the same authorized remote subscription');
+      assert.equal(entry.shadowrocket_module, '/sr', 'Keep the optional Telegram module visible');
+      for (const field of ['clash', 'v2', 'shadowrocket', 'extension'].filter(field => entry[field])) {
         const response = await request(entry[field]);
         assert.equal(response.status, 200, `${username} ${field}`);
         assert.match(response.headers.get('Cache-Control'), /no-store/);
@@ -49,7 +51,7 @@ try {
           if (username === 'dawn') savedLinks.push({ url: entry[field], field, direct: entry.id === 'tx' });
         }
         const text = await response.text();
-        const content = field === 'v2' ? Buffer.from(text, 'base64').toString() : text;
+        const content = ['v2', 'shadowrocket'].includes(field) ? Buffer.from(text, 'base64').toString() : text;
         for (const foreign of ['dawn', 'zw', 'gj', 'crj'].filter(x => x !== username)) assert.ok(!content.includes('T-' + foreign + '-'), 'Foreign node leaked');
       }
     }
@@ -75,7 +77,7 @@ try {
     for (let attempt = 0; attempt < 80; attempt++) {
       const response = await request(link.url);
       const text = await response.text();
-      const body = link.field === 'v2' ? Buffer.from(text, 'base64').toString() : text;
+      const body = ['v2', 'shadowrocket'].includes(link.field) ? Buffer.from(text, 'base64').toString() : text;
       if (response.status === 200 && body.includes('updated-relay.example')) { updated = true; break; }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
@@ -84,6 +86,12 @@ try {
   for (const route of ['/c', '/v2', '/s', '/global-extension.js']) {
     assert.equal((await request(route + '?isp=zw&token=' + tokens.dawn)).status, 403, 'Cross-account request');
   }
+  const moduleResponse = await request('/sr');
+  assert.equal(moduleResponse.status, 200);
+  const module = await moduleResponse.text();
+  assert.ok(module.includes('DOMAIN-SUFFIX,telegram.org,PROXY'));
+  assert.ok(module.includes('RULE-SET,' + origin + '/rules/shadowrocket-telegram.list,PROXY'));
+  assert.ok(!module.includes('trojan://') && !module.includes('hysteria2://'));
   console.log('Actual Cloudflare Pages + D1 runtime: four accounts isolated; all personal/direct formats pass; private files blocked; existing client URLs refresh after configuration changes');
 } finally {
   if (processHandle && processHandle.exitCode === null) {
