@@ -24,7 +24,7 @@ for (const path of process.argv.slice(2, 4)) {
   const permanentResponse = await request('isp=permanent');
   assert.equal(permanentResponse.status, 200);
   assert.match(permanentResponse.headers.get('Subscription-Userinfo'), /; expire=0$/);
-  assert.match(await permanentResponse.text(), /T-permanent-(TJ|HY2)/);
+  assert.match(await permanentResponse.text(), /PERMANENT-(TJ|HY2)/);
   const finiteResponse = await request('isp=dated');
   const finiteExpiry = Date.parse('2099-12-31T23:59:59Z') / 1000;
   assert.ok(finiteResponse.headers.get('Subscription-Userinfo').endsWith(`expire=${finiteExpiry}`));
@@ -32,9 +32,9 @@ for (const path of process.argv.slice(2, 4)) {
   const mixedExpiry = Date.parse('2098-06-01T23:59:59Z') / 1000;
   assert.ok(mixedResponse.headers.get('Subscription-Userinfo').endsWith(`expire=${mixedExpiry}`));
   const body = await mixedResponse.text();
-  assert.match(body, /T-permanent-/);
-  assert.match(body, /T-dated-/);
-  assert.doesNotMatch(body, /T-expired-/);
+  assert.match(body, /PERMANENT-/);
+  assert.match(body, /DATED-/);
+  assert.doesNotMatch(body, /EXPIRED-/);
   assert.equal((await request('isp=expired')).status, 410);
   assert.equal((await request('isp=missing')).status, 410);
   const onlyPermanent = await load([permanent]);
@@ -46,9 +46,9 @@ for (const path of process.argv.slice(2, 4)) {
 const globalSource = withEntries(await readFile(process.argv[4], 'utf8'), inventory);
 const main = vm.runInNewContext(`${globalSource}\nmain`, { atob });
 const config = main({ proxies: [], 'proxy-groups': [], rules: [] });
-assert.ok(config.proxies.some(proxy => proxy.name === 'T-permanent-TJ'));
-assert.ok(config.proxies.some(proxy => proxy.name === 'T-permanent-HY2'));
-assert.ok(!config.proxies.some(proxy => proxy.name.startsWith('T-expired-')));
+assert.ok(config.proxies.some(proxy => proxy.name === 'PERMANENT-TJ'));
+assert.ok(config.proxies.some(proxy => proxy.name === 'PERMANENT-HY2'));
+assert.ok(!config.proxies.some(proxy => proxy.name.startsWith('EXPIRED-')));
 
 const html = await readFile(new URL('../cloudflare-pages-sub/index.html', import.meta.url), 'utf8');
 const helper = html.match(/function expiryText\(entry\) \{[\s\S]*?\n    \}/)[0];

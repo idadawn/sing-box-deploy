@@ -39,7 +39,7 @@ const uri = await importCode(modules['tx-v2.js']);
 const response = await clash.onRequest({ request: new Request('https://sub.example/tx') });
 const yaml = await response.text();
 assert.equal(response.status, 200);
-assert.equal(response.headers.get('Profile-Title'), 'tx-direct');
+assert.equal(response.headers.get('Profile-Title'), 'TX');
 assert.match(response.headers.get('Subscription-Userinfo'), /expire=0$/);
 assert.equal((yaml.match(/type: (trojan|hysteria2)\n/g) || []).length, 2);
 assert.equal((yaml.match(/server: 203\.0\.113\.50\n/g) || []).length, 2);
@@ -50,7 +50,7 @@ assert.match(defaultResolvers, /dns-query#🛡️ 自动容灾/);
 assert.doesNotMatch(defaultResolvers, /doh\.pub|alidns|DIRECT/);
 assert.match(yaml, /"geosite:cn,private":/);
 assert.match(yaml, /\n  fallback: \[\]/);
-assert.doesNotMatch(yaml, /skip-cert-verify: true|ISP 出口|T-ds-|T-dawn/);
+assert.doesNotMatch(yaml, /skip-cert-verify: true|ISP 出口|DS-|DAWN/);
 assert.doesNotMatch(yaml, /DOMAIN-SUFFIX,paypal|"\+\.paypal/);
 for (const cidr of cidrs) {
   const rule = `IP-CIDR,${cidr},DIRECT,no-resolve`;

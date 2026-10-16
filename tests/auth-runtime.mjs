@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
+import { createHmac } from 'node:crypto';
 import { buildFixture, demoPassword } from './auth-fixture.mjs';
 
 const directory = mkdtempSync(resolve(tmpdir(), 'cody-auth-runtime-'));
@@ -29,6 +30,17 @@ try {
   const request = (path, cookie, body) => fetch(origin + path, { headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { Origin: origin, 'Content-Type': 'application/json' } : {}) }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
   for (const route of ['/c', '/v2', '/s', '/global-extension.js', '/subscriptions.json', '/tx', '/tx-v2']) assert.equal((await request(route)).status, 401, route);
   for (const route of ['/nodes.yaml', '/functions/v2.js', '/functions/_private/catalog.mjs', '/.dev.vars', '/fixture.sql', '/wrangler.toml']) assert.equal((await request(route)).status, 404, route);
+  const observed = Math.floor(Date.now() / 1000), period = new Date(observed * 1000).toISOString().slice(0, 7);
+  const started = Date.parse(period + '-01T00:00:00Z') / 1000;
+  const meterKey = readFileSync(resolve(directory, '.dev.vars'), 'utf8').match(/^SUB_METER_KEY=(.+)$/m)[1];
+  const report = JSON.stringify({ source: 'la', generation: '0123456789abcdef0123456789abcdef', period, sequence: 1, observed_at: observed,
+    counters: ['machine', 'isp:dawn', 'isp:zw', 'isp:gj', 'isp:crj'].map(meter => ({ meter,
+      upload_bytes: meter === 'machine' ? 500e9 : 60e9, download_bytes: meter === 'machine' ? 600e9 : 50e9,
+      started_at: started, observed_at: observed, has_gap: false })) });
+  const signature = createHmac('sha256', meterKey).update(observed + '.' + report).digest('hex');
+  const meterResponse = await fetch(origin + '/api/usage/report', { method: 'POST', body: report,
+    headers: { 'Content-Type': 'application/json', 'X-Meter-Timestamp': String(observed), 'X-Meter-Signature': signature } });
+  assert.equal(meterResponse.status, 200);
   const tokens = {}, savedLinks = [];
   for (const username of ['dawn', 'zw', 'gj', 'crj']) {
     const login = await request('/api/login', null, { username, password: demoPassword });
@@ -36,6 +48,10 @@ try {
     const cookie = login.headers.get('Set-Cookie').split(';')[0];
     const me = await (await request('/api/me', cookie)).json();
     assert.deepEqual(me.entries.map(e => e.id), [username, 'tx']);
+    assert.equal(me.usage.personal.used_bytes, 110e9);
+    assert.equal(me.usage.shared.used_bytes, 1100e9);
+    assert.equal(me.usage.personal.over_quota, true);
+    assert.equal(me.usage.mode, 'notify_only');
     tokens[username] = new URL(me.entries[0].v2, origin).searchParams.get('token');
     const repeated = await (await request('/api/me', cookie)).json();
     assert.deepEqual(repeated.entries, me.entries, 'Refreshing the portal must not rotate subscription URLs');
@@ -48,11 +64,12 @@ try {
         assert.match(response.headers.get('Cache-Control'), /no-store/);
         if (field !== 'extension') {
           assert.equal(response.headers.get('Profile-Update-Interval'), '24');
+          assert.match(response.headers.get('Subscription-Userinfo'), /total=(100000000000|1000000000000);/);
           if (username === 'dawn') savedLinks.push({ url: entry[field], field, direct: entry.id === 'tx' });
         }
         const text = await response.text();
         const content = ['v2', 'shadowrocket'].includes(field) ? Buffer.from(text, 'base64').toString() : text;
-        for (const foreign of ['dawn', 'zw', 'gj', 'crj'].filter(x => x !== username)) assert.ok(!content.includes('T-' + foreign + '-'), 'Foreign node leaked');
+        for (const foreign of ['dawn', 'zw', 'gj', 'crj'].filter(x => x !== username)) assert.ok(!content.includes(foreign.toUpperCase() + '-'), 'Foreign node leaked');
       }
     }
     assert.equal((await request('/api/logout', cookie, {})).status, 200);

@@ -59,7 +59,9 @@ Each ISP row produces:
 
 - `trojan-<id>-in` and `hy2-<id>-in`
 - `isp-out-<id>`
-- `T-<id>-TJ` and `T-<id>-HY2`
+- `<UPPERCASE-ID>-TJ` and `<UPPERCASE-ID>-HY2`; internal IDs, credentials and routing stay unchanged.
+
+The optional portal tracks 100 GB per-account ISP quota within a shared 1000 GB public-NIC quota. Periods reset at 00:00 UTC on the first day of each month. It is notify-only: never stop users, block subscriptions or change routing for quota exhaustion. Unknown/partial telemetry must never be advertised as a complete zero reading. See `metering/README.md`; live metering requires a separately approved setup.
 - `/v2?isp=<id>` and `/c?isp=<id>`
 
 ## Performance contract

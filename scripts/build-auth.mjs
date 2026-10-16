@@ -18,6 +18,7 @@ export function buildAuth(directory, env = process.env) {
   mkdirSync(resolve(directory, 'functions'), { recursive: true });
   writeFileSync(resolve(directory, 'functions/_private/catalog.mjs'), `export const catalog = ${JSON.stringify(catalog)};\nexport const globalSource = ${JSON.stringify(globalSource)};\n`, { mode: 0o600 });
   copyFileSync(resolve(root, 'subscription-auth/auth.mjs'), resolve(directory, 'functions/_private/auth.mjs'));
+  copyFileSync(resolve(root, 'subscription-auth/usage.mjs'), resolve(directory, 'functions/_private/usage.mjs'));
   copyFileSync(resolve(root, 'subscription-auth/middleware.js'), resolve(directory, 'functions/_middleware.js'));
   for (const [from, to] of [['portal.html', 'index.html'], ['portal.css', 'portal.css'], ['portal.js', 'portal.js']]) {
     copyFileSync(resolve(root, 'subscription-auth', from), resolve(directory, to));

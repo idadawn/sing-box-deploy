@@ -15,7 +15,7 @@ const v2 = await load(sources[0]);
 const response = await v2.onRequest({ request: new Request('https://sub.example/v2?raw=1') });
 const uris = (await response.text()).trim().split('\n').map(line => new URL(line));
 for (const uri of uris) {
-  const pilot = uri.hash.includes('pilot');
+  const pilot = uri.hash.includes('PILOT');
   assert.equal(uri.hostname, pilot ? 'new.example.com' : 'test');
   assert.equal(uri.searchParams.get('sni'), pilot ? 'cert.example.com' : uri.hostname);
   if (pilot) assert.equal(uri.port, uri.protocol === 'trojan:' ? '64689' : '64690');
@@ -26,12 +26,12 @@ const yaml = await (await clash.onRequest({ request: new Request('https://sub.ex
 assert.equal((yaml.match(/server: new\.example\.com/g) || []).length, 2);
 assert.equal((yaml.match(/sni: cert\.example\.com/g) || []).length, 2);
 assert.equal((yaml.match(/skip-cert-verify: false/g) || []).length, 2);
-assert.doesNotMatch(yaml, /name: "T-unchanged-/);
+assert.doesNotMatch(yaml, /name: "UNCHANGED-/);
 const main = vm.runInNewContext(`${inject(sources[2])}\nmain`, { atob });
 const overlay = main({ proxies: [], 'proxy-groups': [], rules: [] });
 assert.equal(overlay.proxies.length, 4);
 for (const p of overlay.proxies) {
-  const pilot = p.name.startsWith('T-pilot-');
+  const pilot = p.name.startsWith('PILOT-');
   assert.equal(p.server, pilot ? 'new.example.com' : 'test');
   assert.equal(p.sni, pilot ? 'cert.example.com' : p.server);
   assert.equal(p['skip-cert-verify'], false);

@@ -92,6 +92,23 @@ fi
   done
 )
 
+if stat -c '%a' "${ROOT_DIR}/install.sh" >/dev/null 2>&1; then
+(
+  source "${ROOT_DIR}/install.sh"
+  ISP_LIST_FILE="${TMP_DIR}/case-collision.tsv"
+  printf 'dawn\t203.0.113.1\t3128\t1080\tuser\tpass\tnever\nDAWN\t203.0.113.2\t3128\t1080\tuser\tpass\tnever\n' > "${ISP_LIST_FILE}"
+  TROJAN_PORT=443
+  HYSTERIA_PORT=8443
+  ISP_PORT_STEP=1000
+  ISP_PORT_OVERRIDES='{}'
+  if (load_isp_list) >"${TMP_DIR}/case-collision.log" 2>&1; then
+    echo 'Expected uppercase display-name collision to be rejected' >&2
+    exit 1
+  fi
+  grep -Fq 'Duplicate uppercase client ID: DAWN' "${TMP_DIR}/case-collision.log"
+)
+fi
+
 extract_heredoc() {
   local start="$1"
   local end="$2"
@@ -150,6 +167,8 @@ if command -v node >/dev/null 2>&1; then
   node "${ROOT_DIR}/tests/non-expiring.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/ingress-overrides.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/auth.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
+  node "${ROOT_DIR}/tests/usage.mjs"
+  python3 "${ROOT_DIR}/tests/metering.py"
   node --input-type=module - "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/sr.mjs" "${TMP_DIR}/global.mjs" "${TMP_DIR}/c-disabled.mjs" "${TMP_DIR}/global-disabled.mjs" <<'NODE'
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -166,22 +185,22 @@ const v2Response = await v2Module.onRequest({
 });
 const v2Body = await v2Response.text();
 assert.equal(v2Response.status, 200);
-assert.equal(v2Response.headers.get("profile-title"), "demo");
+assert.equal(v2Response.headers.get("profile-title"), "DEMO");
 assert.equal(v2Response.headers.get("profile-update-interval"), "24");
-assert.match(v2Response.headers.get("content-disposition"), /filename=demo/);
-assert.match(v2Response.headers.get("content-disposition"), /filename\*=UTF-8''demo/);
-assert.match(v2Body, /#T-demo-TJ/);
-assert.match(v2Body, /#T-demo-HY2/);
+assert.match(v2Response.headers.get("content-disposition"), /filename=DEMO/);
+assert.match(v2Response.headers.get("content-disposition"), /filename\*=UTF-8''DEMO/);
+assert.match(v2Body, /#DEMO-TJ/);
+assert.match(v2Body, /#DEMO-HY2/);
 
 const clashResponse = await clashModule.onRequest({
   request: new Request("https://sub.example/c?isp=demo"),
 });
 const clashBody = await clashResponse.text();
 assert.equal(clashResponse.status, 200);
-assert.equal(clashResponse.headers.get("profile-title"), "demo");
+assert.equal(clashResponse.headers.get("profile-title"), "DEMO");
 assert.equal(clashResponse.headers.get("profile-update-interval"), "24");
-assert.match(clashBody, /name: "T-demo-TJ"/);
-assert.match(clashBody, /name: "T-demo-HY2"/);
+assert.match(clashBody, /name: "DEMO-TJ"/);
+assert.match(clashBody, /name: "DEMO-HY2"/);
 assert.match(clashBody, /name: "📦 TX 大流量"\n    type: fallback/);
 assert.match(clashBody, /name: "♻️ 自动选择"\n    type: fallback/);
 assert.match(clashBody, /name: "🛡️ ISP 出口自动"\n    type: fallback/);
@@ -231,8 +250,8 @@ const allClashResponse = await clashModule.onRequest({
   request: new Request("https://sub.example/c"),
 });
 const allClashBody = await allClashResponse.text();
-const expectedInteractiveNodes = ["T-demo-HY2", "T-demo-TJ", "T-backup-HY2", "T-backup-TJ"];
-const expectedBulkNodes = ["T-demo-TJ", "T-demo-HY2", "T-backup-TJ", "T-backup-HY2"];
+const expectedInteractiveNodes = ["DEMO-HY2", "DEMO-TJ", "BACKUP-HY2", "BACKUP-TJ"];
+const expectedBulkNodes = ["DEMO-TJ", "DEMO-HY2", "BACKUP-TJ", "BACKUP-HY2"];
 function groupBlock(body, name) {
   const start = body.indexOf(`  - name: "${name}"`);
   assert.ok(start >= 0, `missing group ${name}`);

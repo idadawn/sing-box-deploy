@@ -24,7 +24,7 @@ function linkRow(label, path, { sensitive = true, copyLabel = '复制链接' } =
 function importActions(entry) {
   const actions = document.createElement('div');
   actions.className = 'import-actions';
-  const name = entry.kind === 'tx-direct' ? 'LA 直出' : entry.id;
+  const name = entry.kind === 'tx-direct' ? '公共直出' : entry.id.toUpperCase();
   for (const [client, label, path, scheme] of [
     ['clash', '导入 Clash', entry.clash, 'clash://install-config'],
     ['v2rayng', '导入 v2rayNG', entry.v2, 'v2rayng://install-config/'],
@@ -46,26 +46,48 @@ function importActions(entry) {
   }
   return actions;
 }
+function usageSummary(usage, direct) {
+  const box = document.createElement('div'); box.className = 'usage-summary';
+  const label = document.createElement('p'), value = document.createElement('p'), status = document.createElement('span');
+  label.className = 'hint'; label.textContent = direct ? '公共流量 · 整机共用' : '个人流量';
+  value.className = 'usage-value';
+  const limit = (usage?.quota_bytes || (direct ? 1000 : 100) * 1e9) / 1e9;
+  const known = usage?.used_bytes !== null && usage?.used_bytes !== undefined;
+  value.textContent = (known ? (usage.used_bytes / 1e9).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—') + ' / ' + limit + ' GB';
+  const labels = { not_connected: '待接入', unavailable: '暂不可用', partial: '部分统计', stale: '待同步', current: '本月已用' };
+  status.textContent = usage?.over_quota ? '已超额' : labels[usage?.status || 'not_connected'];
+  status.className = 'usage-status' + (usage?.over_quota ? ' over' : '');
+  box.append(label, value, status);
+  return box;
+}
 async function load() {
   const data = await api('/api/me');
-  $('accountName').textContent = data.username;
+  $('accountName').textContent = data.username.toUpperCase();
   $('entries').replaceChildren(...data.entries.map(entry => {
     const card = document.createElement('article'); card.className = 'panel';
     const head = document.createElement('div'), title = document.createElement('h2'), expiry = document.createElement('span'), address = document.createElement('p');
-    head.className = 'entry-header'; title.textContent = entry.kind === 'tx-direct' ? 'LA 直出' : entry.id;
-    expiry.textContent = entry.expires && entry.expires !== 'never' ? '到期 ' + entry.expires : '有效期不限';
+    const direct = entry.kind === 'tx-direct';
+    head.className = 'entry-header'; title.textContent = direct ? '公共直出' : entry.id.toUpperCase();
+    expiry.textContent = direct ? '视频 · 下载' : '个人 ISP';
     address.className = 'address'; address.textContent = entry.host || '';
-    head.append(title, expiry); card.append(head, address, importActions(entry), linkRow('Clash Verge / Mihomo', entry.clash), linkRow('v2rayN / v2rayNG / Shadowrocket', entry.v2));
-    if (entry.extension) card.append(linkRow('Clash Verge 全局扩展', entry.extension));
+    head.append(title, expiry); card.append(head, usageSummary(direct ? data.usage?.shared : data.usage?.personal, direct), importActions(entry));
+    const links = document.createElement('details'), summary = document.createElement('summary');
+    summary.textContent = '链接与模块'; links.className = 'subscription-details';
+    links.append(summary, address, linkRow('Clash', entry.clash), linkRow('v2rayN / v2rayNG / Shadowrocket', entry.v2));
+    if (entry.extension) links.append(linkRow('Clash Verge 全局扩展', entry.extension));
     if (entry.shadowrocket_module) {
       const module = linkRow('Telegram 分流模块（可选）', entry.shadowrocket_module, { sensitive: false, copyLabel: '复制模块' });
       const help = document.createElement('p');
       help.className = 'hint';
-      help.textContent = '让 Telegram 优先走代理。在 Shadowrocket 的“配置 → 模块”中添加并启用；现有规则已能正常代理 Telegram 时可不添加。';
-      module.append(help); card.append(module);
+      help.textContent = 'Shadowrocket“配置 → 模块”中添加。Telegram 已能正常走代理时可不加。';
+      module.append(help); links.append(module);
     }
+    card.append(links);
     return card;
   }));
+  const over = [data.usage?.personal?.over_quota ? '个人流量' : null, data.usage?.shared?.over_quota ? '公共流量' : null].filter(Boolean);
+  $('quotaAlert').hidden = !over.length;
+  $('quotaAlert').textContent = over.length ? over.join('、') + '已超额，当前仅提醒，不停用。' : '';
   view('accountView');
 }
 async function action(button, task) {
