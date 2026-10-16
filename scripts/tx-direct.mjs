@@ -118,7 +118,7 @@ export function renderPages(source, env) {
     for (const [key, value] of Object.entries(replacements)) code = code.replaceAll(key, value || '');
     if (/[A-Z][A-Z0-9_]*_PLACEHOLDER/.test(code)) throw new Error('Unresolved TX template placeholder');
     // IP is the entry address; domain SNI still provides normal TLS validation.
-    code = code.replaceAll("requestedIsp || 'all-isps'", "'tx-direct'")
+    code = code.replaceAll("requestedIsp ? requestedIsp.toUpperCase() : 'ALL-ISPS'", "'TX'")
       .replaceAll('expire=${expire}', 'expire=0')
       .replaceAll('🛡️ ISP 出口自动', '🛡️ TX 出口');
     return code + '\n';

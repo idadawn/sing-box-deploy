@@ -1,3 +1,5 @@
+import { accountUsage, ingestUsage, withUsageHeaders } from './usage.mjs';
+
 const encoder = new TextEncoder();
 const COOKIE = '__Host-sub-session';
 const SESSION_AGE = 7 * 86400;
@@ -169,6 +171,7 @@ export function createHandler({ catalog, globalSource, handlers }) {
   async function handle(context) {
     const { request, env } = context;
     const url = new URL(request.url), path = url.pathname;
+    if (path === '/api/usage/report') return ingestUsage(context, catalog);
     // Explicit public allowlist; never pass arbitrary generated files to ASSETS.
     if (request.method === 'GET' || request.method === 'HEAD') {
       if (['/', '/index.html', '/portal.js', '/portal.css'].includes(path)) return context.next();
@@ -197,7 +200,7 @@ export function createHandler({ catalog, globalSource, handlers }) {
         if (entry.kind !== 'tx-direct') result.extension = '/s?isp=' + encodeURIComponent(entry.id) + '&token=' + encodeURIComponent(personalToken);
         return result;
       });
-      return json(path === '/api/me' ? { username: user.username, entries } : entries);
+      return json(path === '/api/me' ? { username: user.username, entries, usage: await accountUsage(env.SUB_AUTH_DB, env, allowed) } : entries);
     }
     const requested = url.searchParams.getAll('isp');
     if (requested.length > 1 || requested.some(id => !allowed.includes(id))) return error('没有这条线路的访问权限', 403);
@@ -213,7 +216,9 @@ export function createHandler({ catalog, globalSource, handlers }) {
       const source = globalSource.replace(match[0], 'const ispEntries = ' + JSON.stringify(entries));
       return new Response(source, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
     }
-    return handlers[path]({ ...context, data: { ...context.data, allowedIsps: permitted } });
+    const response = await handlers[path]({ ...context, data: { ...context.data, allowedIsps: permitted } });
+    const usage = await accountUsage(env.SUB_AUTH_DB, env, allowed);
+    return withUsageHeaders(response, direct ? usage.shared : usage.personal);
   }
   return async context => {
     try {

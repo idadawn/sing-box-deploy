@@ -647,6 +647,7 @@ load_isp_list() {
   local id host http_port socks_port user password expires extra
   local trojan_port hysteria_port override_ports override_id
   local -A seen_ids=()
+  local -A seen_display_ids=()
   local -A seen_client_ports=()
   today="$(date -u +%F)"
 
@@ -674,6 +675,11 @@ load_isp_list() {
       exit 1
     }
     seen_ids["${id}"]=1
+    [[ -z "${seen_display_ids[${id^^}]:-}" ]] || {
+      log_error "Duplicate uppercase client ID: ${id^^}"
+      exit 1
+    }
+    seen_display_ids["${id^^}"]=1
 
     validate_domain_like "ISP ${id} IP/域名" "${host}"
     validate_port "ISP ${id} HTTP_PORT" "${http_port}"
@@ -1867,9 +1873,9 @@ verify_subscription() {
       local tx_c tx_v2 cidr
       tx_c=$(curl -fsS --max-time 10 "https://${domain}/tx?${verification_query}" 2>/dev/null || true)
       tx_v2=$(curl -fsS --max-time 10 "https://${domain}/tx-v2?raw=1&${verification_query}" 2>/dev/null || true)
-      if grep -Fq 'name: "T-tx-TJ"' <<< "${tx_c}" && grep -Fq 'name: "T-tx-HY2"' <<< "${tx_c}" \
+      if grep -Fq 'name: "TX-TJ"' <<< "${tx_c}" && grep -Fq 'name: "TX-HY2"' <<< "${tx_c}" \
         && grep -Fq "server: ${TX_DIRECT_IP}" <<< "${tx_c}" \
-        && [[ "$(grep -c '#T-tx-' <<< "${tx_v2}" || true)" -eq 2 ]]; then
+        && [[ "$(grep -c '#TX-' <<< "${tx_v2}" || true)" -eq 2 ]]; then
         tx_ok=1
         while IFS= read -r cidr; do
           [[ -z "${cidr}" ]] && continue
@@ -1892,11 +1898,11 @@ verify_subscription() {
         personal_c_profile=$(awk -F': *' 'tolower($1) == "profile-title" {print $2; exit}' <<< "${personal_c_headers}")
         personal_c_update_interval=$(awk -F': *' 'tolower($1) == "profile-update-interval" {print $2; exit}' <<< "${personal_c_headers}")
         personal_c_filename=$(awk -F': *' 'tolower($1) == "content-disposition" {print $2; exit}' <<< "${personal_c_headers}")
-        personal_c_filename_expected="attachment; filename=${id}; filename*=UTF-8''${id}"
-        if [[ "$(grep -c "#T-${id}-" <<< "${personal_v2}" || true)" -ne 2 ]] \
-          || ! grep -Fq "name: \"T-${id}-TJ\"" <<< "${personal_c}" \
-          || ! grep -Fq "name: \"T-${id}-HY2\"" <<< "${personal_c}" \
-          || [[ "${personal_c_profile}" != "${id}" ]] \
+        personal_c_filename_expected="attachment; filename=${id^^}; filename*=UTF-8''${id^^}"
+        if [[ "$(grep -c "#${id^^}-" <<< "${personal_v2}" || true)" -ne 2 ]] \
+          || ! grep -Fq "name: \"${id^^}-TJ\"" <<< "${personal_c}" \
+          || ! grep -Fq "name: \"${id^^}-HY2\"" <<< "${personal_c}" \
+          || [[ "${personal_c_profile}" != "${id^^}" ]] \
           || [[ "${personal_c_update_interval}" != "24" ]] \
           || [[ "${personal_c_filename}" != "${personal_c_filename_expected}" ]]; then
           log_warn "ISP ${id} 独立订阅验证失败，重试..."
@@ -2129,8 +2135,8 @@ export async function onRequest(context) {
   }
 
   const nodes = entries.flatMap((entry) => [
-    `trojan://TROJAN_PASSWORD_PLACEHOLDER@${entry.ingress?.server || 'TROJAN_DOMAIN_PLACEHOLDER'}:${entry.trojan_port}?security=tls&sni=${entry.ingress?.sni || 'TROJAN_DOMAIN_PLACEHOLDER'}&alpn=h2%2Chttp%2F1.1&fp=chrome#T-${entry.id}-TJ`,
-    `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@${entry.ingress?.server || 'HYSTERIA_DOMAIN_PLACEHOLDER'}:${entry.hysteria_port}/?sni=${entry.ingress?.sni || 'HYSTERIA_DOMAIN_PLACEHOLDER'}&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#T-${entry.id}-HY2`,
+    `trojan://TROJAN_PASSWORD_PLACEHOLDER@${entry.ingress?.server || 'TROJAN_DOMAIN_PLACEHOLDER'}:${entry.trojan_port}?security=tls&sni=${entry.ingress?.sni || 'TROJAN_DOMAIN_PLACEHOLDER'}&alpn=h2%2Chttp%2F1.1&fp=chrome#${entry.id.toUpperCase()}-TJ`,
+    `hysteria2://HYSTERIA_PASSWORD_PLACEHOLDER@${entry.ingress?.server || 'HYSTERIA_DOMAIN_PLACEHOLDER'}:${entry.hysteria_port}/?sni=${entry.ingress?.sni || 'HYSTERIA_DOMAIN_PLACEHOLDER'}&obfs=salamander&obfs-password=HYSTERIA_OBFS_PLACEHOLDER&insecure=0#${entry.id.toUpperCase()}-HY2`,
   ]);
 
   const uriList = nodes.join('\n');
@@ -2138,7 +2144,7 @@ export async function onRequest(context) {
   const expire = finiteExpiries.length > 0
     ? Math.floor(new Date(`${finiteExpiries.sort()[0]}T23:59:59Z`).getTime() / 1000)
     : 0;
-  const profileName = requestedIsp || 'all-isps';
+  const profileName = requestedIsp ? requestedIsp.toUpperCase() : 'ALL-ISPS';
   const profileHeaders = {
     'Profile-Title': profileName,
     'Profile-Update-Interval': '24',
@@ -2245,8 +2251,8 @@ export async function onRequest(context) {
 
   // Prefer HY2 for interactive traffic on lossy/high-RTT access links, while
   // keeping Trojan first for sustained downloads where TCP delivers more throughput.
-  const proxyNames = entries.flatMap((entry) => [`T-${entry.id}-HY2`, `T-${entry.id}-TJ`]);
-  const txProxyNames = entries.flatMap((entry) => [`T-${entry.id}-TJ`, `T-${entry.id}-HY2`]);
+  const proxyNames = entries.flatMap((entry) => [`${entry.id.toUpperCase()}-HY2`, `${entry.id.toUpperCase()}-TJ`]);
+  const txProxyNames = entries.flatMap((entry) => [`${entry.id.toUpperCase()}-TJ`, `${entry.id.toUpperCase()}-HY2`]);
   const ispOnlyProxyNames = proxyNames;
   const decodeDomainList = (encoded) => atob(encoded)
     .split(/[\s,]+/)
@@ -2271,7 +2277,7 @@ export async function onRequest(context) {
     down: "HYSTERIA_DOWN_PLACEHOLDER Mbps"`;
 
   const proxies = entries.flatMap((entry) => [
-    `  - name: "T-${entry.id}-TJ"
+    `  - name: "${entry.id.toUpperCase()}-TJ"
     type: trojan
     server: ${entry.ingress?.server || 'TROJAN_DOMAIN_PLACEHOLDER'}
     port: ${entry.trojan_port}
@@ -2283,7 +2289,7 @@ export async function onRequest(context) {
       - http/1.1
     skip-cert-verify: false
     client-fingerprint: chrome`,
-    `  - name: "T-${entry.id}-HY2"
+    `  - name: "${entry.id.toUpperCase()}-HY2"
     type: hysteria2
     server: ${entry.ingress?.server || 'HYSTERIA_DOMAIN_PLACEHOLDER'}
     port: ${entry.hysteria_port}
@@ -2624,7 +2630,7 @@ ${txBulkRuleLines}
   const expire = finiteExpiries.length > 0
     ? Math.floor(new Date(`${finiteExpiries.sort()[0]}T23:59:59Z`).getTime() / 1000)
     : 0;
-  const profileName = requestedIsp || 'all-isps';
+  const profileName = requestedIsp ? requestedIsp.toUpperCase() : 'ALL-ISPS';
   return new Response(config, {
     status: 200,
     headers: { 
@@ -2680,7 +2686,7 @@ const ispEntries = JSON.parse(atob("ISP_PUBLIC_LIST_BASE64_PLACEHOLDER"))
   .filter((entry) => entry.expires === 'never' || entry.expires >= today);
 const injectedProxies = ispEntries.flatMap((entry) => [
   {
-    name: `T-${entry.id}-TJ`,
+    name: `${entry.id.toUpperCase()}-TJ`,
     type: "trojan",
     server: entry.ingress?.server || "TROJAN_DOMAIN_PLACEHOLDER",
     port: entry.trojan_port,
@@ -2692,7 +2698,7 @@ const injectedProxies = ispEntries.flatMap((entry) => [
     "client-fingerprint": "chrome",
   },
   {
-    name: `T-${entry.id}-HY2`,
+    name: `${entry.id.toUpperCase()}-HY2`,
     type: "hysteria2",
     server: entry.ingress?.server || "HYSTERIA_DOMAIN_PLACEHOLDER",
     port: entry.hysteria_port,
@@ -2711,9 +2717,7 @@ const injectedProxies = ispEntries.flatMap((entry) => [
   },
 ]);
 
-const txNodeNames = injectedProxies
-  .map((proxy) => proxy.name)
-  .filter((name) => name.startsWith("T-"));
+const txNodeNames = injectedProxies.map((proxy) => proxy.name);
 const finalNodeNames = injectedProxies.map((proxy) => proxy.name);
 const injectedNodeNames = new Set(finalNodeNames);
 

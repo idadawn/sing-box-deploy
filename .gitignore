@@ -56,3 +56,11 @@ cloudflare-pages-sub/_routes.json
 cloudflare-pages-sub/.assetsignore
 cloudflare-pages-sub/.auth-enabled
 .auth-private/
+
+# Local metering state and credentials
+metering/config.json
+metering/*.key
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+__pycache__/

@@ -1,0 +1,17 @@
+{
+  "source": "la",
+  "portal": "https://dl.1761.org",
+  "key_file": "/etc/subscription-meter/report.key",
+  "state_file": "/var/lib/subscription-meter/state.sqlite3",
+  "interface": "eth0",
+  "sing_box_config": "/etc/sing-box/config.json",
+  "service": "sing-box.service",
+  "stats_listen": "127.0.0.1:10085",
+  "grpcurl": "/usr/local/bin/grpcurl",
+  "isp_outbounds": {
+    "dawn": "isp-out-dawn",
+    "zw": "isp-out-zw",
+    "gj": "isp-out-gj",
+    "crj": "isp-out-crj"
+  }
+}

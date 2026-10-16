@@ -39,7 +39,7 @@ export async function buildFixture(directory) {
   const index = resolve(directory, 'index.html');
   writeFileSync(index, readFileSync(index, 'utf8').replace('个人空间', '测试预览 · 虚构数据'));
   const secret = randomToken();
-  writeFileSync(resolve(directory, '.dev.vars'), 'SUB_AUTH_KEY=' + secret + '\n', { mode: 0o600 });
+  writeFileSync(resolve(directory, '.dev.vars'), 'SUB_AUTH_KEY=' + secret + '\nSUB_METER_KEY=' + randomToken() + '\n', { mode: 0o600 });
   let sql = readFileSync(new URL('../subscription-auth/schema.sql', import.meta.url), 'utf8');
   for (const entry of entries) {
     const salt = randomToken();

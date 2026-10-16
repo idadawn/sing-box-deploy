@@ -94,7 +94,7 @@ for (const [token, id, foreign] of [[aliceToken, 'demo', 'backup'], [bobToken, '
     if (path === '/s' || path === '/global-extension.js') {
       const entries = JSON.parse(body.match(/const ispEntries = (\[[^\n]+\])/)[1]);
       assert.deepEqual(entries.map(e => e.id), [id]); assert.ok(!body.includes('JSON.parse(atob('));
-    } else { assert.ok(body.includes(`T-${id}-`)); assert.ok(!body.includes(`T-${foreign}-`)); }
+    } else { assert.ok(body.includes(`${id.toUpperCase()}-`)); assert.ok(!body.includes(`${foreign.toUpperCase()}-`)); }
   }
   assert.equal((await request('/c?isp=' + foreign + '&token=' + token)).status, 403);
   assert.equal((await request('/v2?isp=' + foreign + '&token=' + token)).status, 403);

@@ -19,3 +19,13 @@
   .client-import { font-size: 13px; padding: 10px 8px; }
 }
 @media (prefers-reduced-motion: reduce) { .client-import { transition: none; } }
+.usage-summary { margin-top: 22px; padding: 18px; background: #0d1523; border-radius: 12px; }
+.usage-summary .hint { margin: 0 0 4px; }
+.usage-value { font-size: 25px; font-weight: 650; letter-spacing: -.025em; margin: 0 0 6px; }
+.usage-status { font-size: 12px; color: var(--muted); }
+.usage-status.over, .quota-alert { color: #ffc28f; }
+.quota-alert { padding: 12px 16px; border: 1px solid #695039; border-radius: 10px; background: #302519; }
+.subscription-details { margin-top: 0; }
+.billing-cycle { font-size: 12px; text-align: center; margin: 18px 0; }
+.usage-help { padding-top: 16px; margin-bottom: 24px; font-size: 14px; }
+#message:empty { display: none; }

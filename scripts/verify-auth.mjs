@@ -25,9 +25,9 @@ for (const account of accounts) {
       assert.match(response.headers.get('Cache-Control'), /no-store/);
       const text = await response.text();
       const body = format === 'v2' ? Buffer.from(text, 'base64').toString() : text;
-      assert.ok(body.includes(id), `Missing own scope for ${account.username}`);
+      assert.ok(format === 's' ? body.includes('"id":"' + id + '"') : body.includes(id.toUpperCase()), `Missing own scope for ${account.username}`);
       for (const other of accounts.flatMap(a => a.scopes).filter(other => other !== 'tx' && !account.scopes.includes(other))) {
-        assert.ok(!body.includes(`T-${other}-`), 'Cross-account node disclosure');
+        assert.ok(!body.includes(`${other.toUpperCase()}-`), 'Cross-account node disclosure');
       }
     }
   }

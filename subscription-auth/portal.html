@@ -15,8 +15,7 @@
     <header><a class="brand" href="/">自由翱翔<span>个人办公空间</span></a><span class="badge">个人空间</span></header>
     <p id="message" role="status" aria-live="polite"></p>
     <section id="loginView" class="login panel" hidden>
-      <p class="eyebrow">为专注办公而来</p><h1>登录个人办公空间</h1>
-      <p class="muted">管理你的专属线路，一键导入客户端，让日常办公更方便。</p>
+      <h1>登录</h1>
       <form id="loginForm">
         <label>账号<input name="username" autocomplete="username" required maxlength="32" autocapitalize="none" spellcheck="false"></label>
         <label>密码<input name="password" type="password" autocomplete="current-password" required maxlength="128"></label>
@@ -25,8 +24,7 @@
       <p class="hint">首次使用，请打开管理员提供的邀请链接。</p>
     </section>
     <section id="activateView" class="login panel" hidden>
-      <p class="eyebrow">开启你的办公空间</p><h1>设置你的登录密码</h1>
-      <p class="muted">邀请仅能使用一次。设置完成后即可管理自己的办公线路。</p>
+      <h1>设置登录密码</h1>
       <form id="activateForm">
         <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
         <label>确认密码<input name="confirmation" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
@@ -35,12 +33,12 @@
       </form>
     </section>
     <section id="accountView" hidden>
-      <div class="heading"><div><p class="eyebrow" id="accountName"></p><h1>我的办公空间</h1><p class="muted">专属线路，一键导入，随时开始工作。</p></div><button id="logout" class="quiet">退出登录</button></div>
-      <div class="network-heading"><h2>我的办公线路</h2><p class="hint">仅显示分配给你的线路。安装客户端后即可快速导入：v2rayNG 用于 Android，Shadowrocket 用于 iPhone / iPad。</p></div>
+      <div class="heading"><div><p class="eyebrow" id="accountName"></p><h1>我的线路</h1></div><button id="logout" class="quiet">退出登录</button></div>
+      <p id="quotaAlert" class="quota-alert" role="status" hidden></p>
       <div id="entries" class="entries"></div>
-      <p class="hint import-help">点击后在客户端确认导入；如未唤起客户端，可复制下方链接手动添加订阅。</p>
-      <p class="hint import-help">首次导入后，在客户端点击“更新订阅”即可获取最新配置。退出网页登录不影响更新；主动重置链接后，需要重新导入。</p>
-      <section class="panel settings"><h2>账号与链接</h2><p class="muted">专属链接可供客户端自动更新，请勿转发。退出网页登录不会影响订阅更新。</p>
+      <p class="hint billing-cycle">每月 1 日 00:00 UTC 重置 · 个人用量包含在整机公共额度内</p>
+      <details class="usage-help"><summary>使用帮助</summary><p class="hint">v2rayNG 用于 Android，Shadowrocket 用于 iPhone / iPad。未唤起时，可复制链接手动添加。导入后在客户端更新订阅，退出网页登录不影响更新。</p></details>
+      <section class="panel settings"><h2>账号</h2>
         <details><summary>修改登录密码</summary><form id="passwordForm" class="password-form">
           <label>原密码<input name="currentPassword" type="password" autocomplete="current-password" required maxlength="128"></label>
           <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>

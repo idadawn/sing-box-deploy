@@ -678,7 +678,7 @@
       const shadowrocketUrl = absoluteUrl(entry.shadowrocket || entry.v2);
       const shadowrocketModuleUrl = absoluteUrl(entry.shadowrocket_module || '/sr');
 
-      elements.name.textContent = entry.name || entry.id;
+      elements.name.textContent = entry.name || entry.id.toUpperCase();
       elements.host.textContent = entry.host || 'IP 未提供';
       elements.expiry.textContent = expiryText(entry);
       elements.policy.textContent = entry.kind === 'tx-direct'
@@ -723,7 +723,7 @@
 
       const name = document.createElement('span');
       name.className = 'node-name';
-      name.textContent = entry.name || entry.id;
+      name.textContent = entry.name || entry.id.toUpperCase();
 
       const expiry = document.createElement('span');
       expiry.className = 'node-expiry';
