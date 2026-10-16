@@ -5,17 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <meta name="referrer" content="no-referrer">
-  <title>我的订阅</title>
+  <title>自由翱翔 · 个人办公空间</title>
+  <meta name="description" content="自由翱翔，为个人办公提供专属线路管理与客户端快捷导入。">
   <link rel="stylesheet" href="/portal.css">
   <script src="/portal.js" defer></script>
 </head>
 <body>
   <main>
-    <header><a class="brand" href="/">1761<span>订阅中心</span></a><span class="badge">个人空间</span></header>
+    <header><a class="brand" href="/">自由翱翔<span>个人办公空间</span></a><span class="badge">个人空间</span></header>
     <p id="message" role="status" aria-live="polite"></p>
     <section id="loginView" class="login panel" hidden>
-      <p class="eyebrow">WELCOME BACK</p><h1>登录我的订阅</h1>
-      <p class="muted">查看分配给你的线路，复制专属链接，随时更新订阅。</p>
+      <p class="eyebrow">为专注办公而来</p><h1>登录个人办公空间</h1>
+      <p class="muted">管理你的专属线路，一键导入客户端，让日常办公更方便。</p>
       <form id="loginForm">
         <label>账号<input name="username" autocomplete="username" required maxlength="32" autocapitalize="none" spellcheck="false"></label>
         <label>密码<input name="password" type="password" autocomplete="current-password" required maxlength="128"></label>
@@ -24,8 +25,8 @@
       <p class="hint">首次使用，请打开管理员提供的邀请链接。</p>
     </section>
     <section id="activateView" class="login panel" hidden>
-      <p class="eyebrow">GET STARTED</p><h1>设置你的登录密码</h1>
-      <p class="muted">邀请仅能使用一次。设置完成后即可查看自己的订阅。</p>
+      <p class="eyebrow">开启你的办公空间</p><h1>设置你的登录密码</h1>
+      <p class="muted">邀请仅能使用一次。设置完成后即可管理自己的办公线路。</p>
       <form id="activateForm">
         <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
         <label>确认密码<input name="confirmation" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
@@ -34,8 +35,11 @@
       </form>
     </section>
     <section id="accountView" hidden>
-      <div class="heading"><div><p class="eyebrow" id="accountName"></p><h1>我的订阅</h1><p class="muted">这里仅显示分配给你的线路。</p></div><button id="logout" class="quiet">退出登录</button></div>
+      <div class="heading"><div><p class="eyebrow" id="accountName"></p><h1>我的办公空间</h1><p class="muted">专属线路，一键导入，随时开始工作。</p></div><button id="logout" class="quiet">退出登录</button></div>
+      <div class="network-heading"><h2>我的办公线路</h2><p class="hint">仅显示分配给你的线路。已安装客户端即可快速导入，v2rayNG 请在 Android 上使用。</p></div>
       <div id="entries" class="entries"></div>
+      <p class="hint import-help">点击后在客户端确认导入；如未唤起客户端，可复制下方链接手动添加订阅。</p>
+      <p class="hint import-help">首次导入后，在客户端点击“更新订阅”即可获取最新配置。退出网页登录不影响更新；主动重置链接后，需要重新导入。</p>
       <section class="panel settings"><h2>账号与链接</h2><p class="muted">专属链接可供客户端自动更新，请勿转发。退出网页登录不会影响订阅更新。</p>
         <details><summary>修改登录密码</summary><form id="passwordForm" class="password-form">
           <label>原密码<input name="currentPassword" type="password" autocomplete="current-password" required maxlength="128"></label>
@@ -45,7 +49,7 @@
         <details><summary>重置专属订阅链接</summary><p class="muted">重置后旧链接立即失效。你需要在所有客户端中替换订阅链接。</p><button id="rotate" class="danger">确认重置链接</button></details>
       </section>
     </section>
-    <footer>1761 · 个人订阅管理</footer>
+    <footer>自由翱翔 · 专注个人办公</footer>
   </main>
 </body>
 </html>

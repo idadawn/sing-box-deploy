@@ -21,6 +21,27 @@ function linkRow(label, path) {
   });
   row.append(input, button); box.append(title, row); return box;
 }
+function importActions(entry) {
+  const actions = document.createElement('div');
+  actions.className = 'import-actions';
+  const name = entry.kind === 'tx-direct' ? 'LA 直出' : entry.id;
+  for (const [client, label, path, scheme] of [
+    ['clash', '导入 Clash', entry.clash, 'clash://install-config'],
+    ['v2rayng', '导入 v2rayNG', entry.v2, 'v2rayng://install-config/'],
+  ]) {
+    const link = document.createElement('a');
+    const subscription = new URL(path, location.origin).href;
+    link.className = 'client-import ' + client;
+    // Encode the whole personal URL so isp/token remain inside the URL parameter.
+    link.href = scheme + '?url=' + encodeURIComponent(subscription);
+    link.rel = 'noopener noreferrer';
+    link.referrerPolicy = 'no-referrer';
+    link.textContent = label;
+    link.setAttribute('aria-label', name + '：' + label);
+    actions.append(link);
+  }
+  return actions;
+}
 async function load() {
   const data = await api('/api/me');
   $('accountName').textContent = data.username;
@@ -30,7 +51,7 @@ async function load() {
     head.className = 'entry-header'; title.textContent = entry.kind === 'tx-direct' ? 'LA 直出' : entry.id;
     expiry.textContent = entry.expires && entry.expires !== 'never' ? '到期 ' + entry.expires : '有效期不限';
     address.className = 'address'; address.textContent = entry.host || '';
-    head.append(title, expiry); card.append(head, address, linkRow('Clash Verge / Mihomo', entry.clash), linkRow('v2rayN / Shadowrocket', entry.v2));
+    head.append(title, expiry); card.append(head, address, importActions(entry), linkRow('Clash Verge / Mihomo', entry.clash), linkRow('v2rayN / v2rayNG / Shadowrocket', entry.v2));
     if (entry.extension) card.append(linkRow('Clash Verge 全局扩展', entry.extension));
     if (entry.shadowrocket_module) card.append(linkRow('Shadowrocket Telegram 模块', entry.shadowrocket_module));
     return card;
