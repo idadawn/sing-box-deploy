@@ -1696,6 +1696,10 @@ show_final_info() {
 # 验证订阅是否正常
 # -----------------------------
 verify_subscription() {
+  if is_true "${SUB_AUTH_ENABLED:-false}"; then
+    node "${SCRIPT_DIR}/scripts/verify-auth.mjs" "https://${SUB_DOMAIN}"
+    return
+  fi
   log_info "验证订阅链接..."
   
   local domain="${SUB_DOMAIN}"
@@ -2113,7 +2117,9 @@ export async function onRequest(context) {
   const requestedIsp = url.searchParams.get('isp');
   const today = new Date().toISOString().slice(0, 10);
   const allEntries = JSON.parse(atob('ISP_PUBLIC_LIST_BASE64_PLACEHOLDER'));
-  const activeEntries = allEntries.filter((entry) => entry.expires === 'never' || entry.expires >= today);
+  const activeEntries = allEntries.filter((entry) =>
+    (entry.expires === 'never' || entry.expires >= today) &&
+    (!context.data?.allowedIsps || context.data.allowedIsps.includes(entry.id)));
   const entries = requestedIsp
     ? activeEntries.filter((entry) => entry.id === requestedIsp)
     : activeEntries;
@@ -2227,7 +2233,9 @@ export async function onRequest(context) {
   const requestedIsp = url.searchParams.get('isp');
   const today = new Date().toISOString().slice(0, 10);
   const allEntries = JSON.parse(atob('ISP_PUBLIC_LIST_BASE64_PLACEHOLDER'));
-  const activeEntries = allEntries.filter((entry) => entry.expires === 'never' || entry.expires >= today);
+  const activeEntries = allEntries.filter((entry) =>
+    (entry.expires === 'never' || entry.expires >= today) &&
+    (!context.data?.allowedIsps || context.data.allowedIsps.includes(entry.id)));
   const entries = requestedIsp
     ? activeEntries.filter((entry) => entry.id === requestedIsp)
     : activeEntries;
@@ -3045,6 +3053,9 @@ REDIRECTS
     "${pages_dir}/subscriptions.json" \
     "${pages_dir}/_redirects"
 
+  validate_generated_pages_assets "${pages_dir}"
+  node "${SCRIPT_DIR}/scripts/build-auth.mjs" "${pages_dir}"
+
   log_success "订阅配置文件已更新"
 
   # 检查 wrangler 是否安装
@@ -3061,8 +3072,6 @@ REDIRECTS
     return 0
   fi
 
-  validate_generated_pages_assets "${pages_dir}"
-
   log_info "开始部署到 Cloudflare Pages..."
   
   # 执行部署
@@ -3076,6 +3085,12 @@ REDIRECTS
     # 验证订阅
     if verify_subscription; then
       if ! activate_staged_pages "${pages_dir}" "${live_pages_dir}"; then
+        if is_true "${SUB_AUTH_ENABLED:-false}" && [[ ! -f "${live_pages_dir}/.auth-enabled" ]]; then
+          log_error "本地资产切换失败；为防止重新公开凭据，不回滚到无鉴权版本。线上保留受保护版本。"
+          discard_pages_stage
+          release_pages_deploy_lock
+          return 1
+        fi
         log_error "本地资产切换失败，重新部署原版本以保持线上与本地一致"
         (cd "${live_pages_dir}" && GIT_OPTIONAL_LOCKS=0 CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="${CF_PAGES_PROJECT}" --branch=main 2>&1) || true
         discard_pages_stage
@@ -3085,6 +3100,13 @@ REDIRECTS
       discard_pages_stage
       release_pages_deploy_lock
       return 0
+    fi
+    if is_true "${SUB_AUTH_ENABLED:-false}" && [[ ! -f "${live_pages_dir}/.auth-enabled" ]]; then
+      log_error "鉴权部署验证失败；禁止自动回滚至无鉴权版本。保留关闭访问的新版，需修复鉴权配置后重试。"
+      activate_staged_pages "${pages_dir}" "${live_pages_dir}"
+      discard_pages_stage
+      release_pages_deploy_lock
+      return 1
     fi
     log_error "新 Pages 部署线上验证失败，开始重新部署原版本"
     if (cd "${live_pages_dir}" && GIT_OPTIONAL_LOCKS=0 CLOUDFLARE_API_TOKEN="${CF_API_TOKEN}" CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" wrangler pages deploy . --project-name="${CF_PAGES_PROJECT}" --branch=main 2>&1); then
