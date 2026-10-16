@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <title>我的订阅</title>
+  <link rel="stylesheet" href="/portal.css">
+  <script src="/portal.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><a class="brand" href="/">1761<span>订阅中心</span></a><span class="badge">个人空间</span></header>
+    <p id="message" role="status" aria-live="polite"></p>
+    <section id="loginView" class="login panel" hidden>
+      <p class="eyebrow">WELCOME BACK</p><h1>登录我的订阅</h1>
+      <p class="muted">查看分配给你的线路，复制专属链接，随时更新订阅。</p>
+      <form id="loginForm">
+        <label>账号<input name="username" autocomplete="username" required maxlength="32" autocapitalize="none" spellcheck="false"></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required maxlength="128"></label>
+        <button class="primary" type="submit">登录</button>
+      </form>
+      <p class="hint">首次使用，请打开管理员提供的邀请链接。</p>
+    </section>
+    <section id="activateView" class="login panel" hidden>
+      <p class="eyebrow">GET STARTED</p><h1>设置你的登录密码</h1>
+      <p class="muted">邀请仅能使用一次。设置完成后即可查看自己的订阅。</p>
+      <form id="activateForm">
+        <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+        <label>确认密码<input name="confirmation" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+        <p class="hint">至少 12 位，建议使用密码管理器生成。</p>
+        <button class="primary" type="submit">设置密码并进入</button>
+      </form>
+    </section>
+    <section id="accountView" hidden>
+      <div class="heading"><div><p class="eyebrow" id="accountName"></p><h1>我的订阅</h1><p class="muted">这里仅显示分配给你的线路。</p></div><button id="logout" class="quiet">退出登录</button></div>
+      <div id="entries" class="entries"></div>
+      <section class="panel settings"><h2>账号与链接</h2><p class="muted">专属链接可供客户端自动更新，请勿转发。退出网页登录不会影响订阅更新。</p>
+        <details><summary>修改登录密码</summary><form id="passwordForm" class="password-form">
+          <label>原密码<input name="currentPassword" type="password" autocomplete="current-password" required maxlength="128"></label>
+          <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+          <button type="submit">保存新密码</button><p class="hint">保存后所有网页会话退出，订阅链接保持不变。</p>
+        </form></details>
+        <details><summary>重置专属订阅链接</summary><p class="muted">重置后旧链接立即失效。你需要在所有客户端中替换订阅链接。</p><button id="rotate" class="danger">确认重置链接</button></details>
+      </section>
+    </section>
+    <footer>1761 · 个人订阅管理</footer>
+  </main>
+</body>
+</html>

@@ -46,3 +46,13 @@ node_modules/
 .claude/
 .codex
 cloudflare-pages-sub/manifest.json
+
+# Generated authentication bundle and private activation material
+cloudflare-pages-sub/functions/_private/
+cloudflare-pages-sub/functions/_middleware.js
+cloudflare-pages-sub/portal.js
+cloudflare-pages-sub/portal.css
+cloudflare-pages-sub/_routes.json
+cloudflare-pages-sub/.assetsignore
+cloudflare-pages-sub/.auth-enabled
+.auth-private/

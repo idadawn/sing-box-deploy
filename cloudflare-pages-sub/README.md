@@ -114,3 +114,7 @@ wrangler pages deploy . --project-name="${CF_PAGES_PROJECT:-sub-converter}" --br
 3. 保存并更新任意机场配置
 
 脚本将机场节点用于 `🛫 机场中转`，最终网站出口固定为 T 后端的 ISP，或显式允许的 T 公网直出。
+
+## 可选登录入口
+
+设置 `SUB_AUTH_ENABLED=true` 后，构建流程会替换公开首页，并通过 Pages middleware / D1 限制账号可见的 ISP。`/v2`、`/c`、`/s`、独立直出及清单都要求会话或适用的个人令牌；公开全局脚本和静态节点文件会从资产中移除。默认不启用，现有链接保持原样。上线前必须配置数据库、Secret、账号及验证令牌，并处理历史公开部署，见 [完整说明](../subscription-auth/README.md)。
