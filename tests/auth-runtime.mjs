@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -29,7 +29,7 @@ try {
   const request = (path, cookie, body) => fetch(origin + path, { headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { Origin: origin, 'Content-Type': 'application/json' } : {}) }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
   for (const route of ['/c', '/v2', '/s', '/global-extension.js', '/subscriptions.json', '/tx', '/tx-v2']) assert.equal((await request(route)).status, 401, route);
   for (const route of ['/nodes.yaml', '/functions/v2.js', '/functions/_private/catalog.mjs', '/.dev.vars', '/fixture.sql', '/wrangler.toml']) assert.equal((await request(route)).status, 404, route);
-  const tokens = {};
+  const tokens = {}, savedLinks = [];
   for (const username of ['dawn', 'zw', 'gj', 'crj']) {
     const login = await request('/api/login', null, { username, password: demoPassword });
     assert.equal(login.status, 200, 'Login in actual Workers runtime');
@@ -37,21 +37,54 @@ try {
     const me = await (await request('/api/me', cookie)).json();
     assert.deepEqual(me.entries.map(e => e.id), [username, 'tx']);
     tokens[username] = new URL(me.entries[0].v2, origin).searchParams.get('token');
+    const repeated = await (await request('/api/me', cookie)).json();
+    assert.deepEqual(repeated.entries, me.entries, 'Refreshing the portal must not rotate subscription URLs');
     for (const entry of me.entries) {
       for (const field of ['clash', 'v2', 'extension'].filter(field => entry[field])) {
         const response = await request(entry[field]);
         assert.equal(response.status, 200, `${username} ${field}`);
         assert.match(response.headers.get('Cache-Control'), /no-store/);
+        if (field !== 'extension') {
+          assert.equal(response.headers.get('Profile-Update-Interval'), '24');
+          if (username === 'dawn') savedLinks.push({ url: entry[field], field, direct: entry.id === 'tx' });
+        }
         const text = await response.text();
         const content = field === 'v2' ? Buffer.from(text, 'base64').toString() : text;
         for (const foreign of ['dawn', 'zw', 'gj', 'crj'].filter(x => x !== username)) assert.ok(!content.includes('T-' + foreign + '-'), 'Foreign node leaked');
       }
     }
+    assert.equal((await request('/api/logout', cookie, {})).status, 200);
+    assert.equal((await request(me.entries[0].clash)).status, 200, 'Client updates do not depend on the browser session');
+    const relogin = await request('/api/login', null, { username, password: demoPassword });
+    const newCookie = relogin.headers.get('Set-Cookie').split(';')[0];
+    const afterLogin = await (await request('/api/me', newCookie)).json();
+    assert.deepEqual(afterLogin.entries, me.entries, 'Re-login must preserve existing client subscription URLs');
+  }
+  // Simulate a new generated configuration while preserving D1 and signing key.
+  // The exact URL saved during initial import must now return the updated values.
+  for (const file of ['c.js', 'v2.js']) {
+    const path = resolve(directory, 'functions', file);
+    writeFileSync(path, readFileSync(path, 'utf8').replaceAll('relay.example', 'updated-relay.example'));
+  }
+  for (const file of ['tx.js', 'tx-v2.js']) {
+    const path = resolve(directory, 'functions', file);
+    writeFileSync(path, readFileSync(path, 'utf8').replaceAll('relay.example', 'updated-relay.example'));
+  }
+  for (const link of savedLinks) {
+    let updated = false;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const response = await request(link.url);
+      const text = await response.text();
+      const body = link.field === 'v2' ? Buffer.from(text, 'base64').toString() : text;
+      if (response.status === 200 && body.includes('updated-relay.example')) { updated = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    assert.ok(updated, 'An existing subscription URL must retrieve the newly published configuration');
   }
   for (const route of ['/c', '/v2', '/s', '/global-extension.js']) {
     assert.equal((await request(route + '?isp=zw&token=' + tokens.dawn)).status, 403, 'Cross-account request');
   }
-  console.log('Actual Cloudflare Pages + D1 runtime: four accounts isolated; all personal/direct formats pass; private files blocked');
+  console.log('Actual Cloudflare Pages + D1 runtime: four accounts isolated; all personal/direct formats pass; private files blocked; existing client URLs refresh after configuration changes');
 } finally {
   if (processHandle && processHandle.exitCode === null) {
     await new Promise(resolve => { processHandle.once('exit', resolve); processHandle.kill('SIGTERM'); });
