@@ -34,7 +34,7 @@ export async function buildFixture(directory) {
     TX_DIRECT_TROJAN_PASSWORD: 'fixture-direct-trojan-password', TX_DIRECT_HYSTERIA_PASSWORD: 'fixture-direct-hy-password', TX_DIRECT_OBFS_PASSWORD: 'fixture-direct-obfs-password',
     TROJAN_DOMAIN: 'relay.example', HYSTERIA_DOMAIN: 'relay.example', CLASH_RULESET_BASE_URL: 'https://sub.example/rules',
   }))) writeFileSync(resolve(directory, 'functions', file), code);
-  writeFileSync(resolve(directory, 'subscriptions.json'), JSON.stringify(entries.map(e => ({ ...e, v2: '/v2?isp=' + e.id, clash: '/c?isp=' + e.id })).concat({ id: 'tx', kind: 'tx-direct', host: '198.51.100.10', v2: '/tx-v2', clash: '/tx' })));
+  writeFileSync(resolve(directory, 'subscriptions.json'), JSON.stringify(entries.map(e => ({ ...e, v2: '/v2?isp=' + e.id, clash: '/c?isp=' + e.id, shadowrocket: '/v2?isp=' + e.id, shadowrocket_module: '/sr' })).concat({ id: 'tx', kind: 'tx-direct', host: '198.51.100.10', v2: '/tx-v2', clash: '/tx', shadowrocket: '/tx-v2', shadowrocket_module: '/sr' })));
   buildAuth(directory, { SUB_AUTH_ENABLED: 'true', SUB_AUTH_D1_ID: '00000000-0000-0000-0000-000000000000' });
   const index = resolve(directory, 'index.html');
   writeFileSync(index, readFileSync(index, 'utf8').replace('个人空间', '测试预览 · 虚构数据'));

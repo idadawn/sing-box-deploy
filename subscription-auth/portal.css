@@ -4,12 +4,14 @@
 .network-heading { margin: 0 0 18px; }
 .network-heading h2 { margin-bottom: 4px; }
 .network-heading .hint { margin: 0; }
-.import-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0 24px; }
-.client-import { display: flex; align-items: center; justify-content: center; min-height: 46px; padding: 10px 12px; border: 1px solid transparent; border-radius: 10px; font-size: 14px; font-weight: 650; text-decoration: none; transition: background .15s ease, border-color .15s ease; }
+.import-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 24px; }
+.client-import { display: flex; flex: 1 1 140px; align-items: center; justify-content: center; min-height: 46px; padding: 10px 12px; border: 1px solid transparent; border-radius: 10px; font-size: 14px; font-weight: 650; text-decoration: none; white-space: nowrap; transition: background .15s ease, border-color .15s ease; }
 .client-import.clash { color: #10213c; background: var(--accent); }
 .client-import.clash:hover { background: #c0d6ff; }
 .client-import.v2rayng { color: #ace7d0; background: #163b36; border-color: #2c6254; }
 .client-import.v2rayng:hover { background: #204d43; border-color: #43846f; }
+.client-import.shadowrocket { color: #dfd2ff; background: #302747; border-color: #5c497e; }
+.client-import.shadowrocket:hover { background: #43335f; border-color: #8167aa; }
 .import-help { margin: 14px 4px 0; }
 @media (max-width: 600px) {
   .brand { font-size: 22px; }
