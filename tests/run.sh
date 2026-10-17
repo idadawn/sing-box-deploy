@@ -19,6 +19,23 @@ for script in install.sh manage.sh migrate.sh setup-ssh.sh sync-clash-rules.sh t
   bash -n "${ROOT_DIR}/${script}"
 done
 
+(
+  source "${ROOT_DIR}/sync-clash-rules.sh"
+  ENV_FILE="${TMP_DIR}/retired.env"
+  printf '%s\n' 'SUB_LEGACY_RETIRED=true' 'SUB_PORTAL_REDIRECT_URL=https://new.example' 'SUB_DOMAIN=old.example' 'SUB_AUTH_ENABLED=false' > "${ENV_FILE}"
+  unset SUB_LEGACY_RETIRED SUB_PORTAL_REDIRECT_URL SUB_DOMAIN SUB_AUTH_ENABLED
+  load_env_file
+  [[ "${SUB_LEGACY_RETIRED}" == true && "${SUB_PORTAL_REDIRECT_URL}" == https://new.example && "${SUB_DOMAIN}" == old.example && "${SUB_AUTH_ENABLED}" == false ]]
+)
+(
+  source "${ROOT_DIR}/install.sh"
+  SUB_LEGACY_RETIRED=true
+  if update_cloudflare_pages >/dev/null 2>&1; then
+    echo 'Retired site must not enter the ordinary public publisher' >&2
+    exit 1
+  fi
+)
+
 INSTALL_HELP="$("${ROOT_DIR}/install.sh" --help)"
 grep -Fq -- '--skip-egress-preflight' <<< "${INSTALL_HELP}"
 grep -Fq -- '--skip-pages' <<< "${INSTALL_HELP}"
@@ -168,6 +185,7 @@ if command -v node >/dev/null 2>&1; then
   node "${ROOT_DIR}/tests/ingress-overrides.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/auth.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/usage.mjs"
+  node "${ROOT_DIR}/tests/retired.mjs"
   node "${ROOT_DIR}/tests/isp-credentials.mjs"
   python3 "${ROOT_DIR}/tests/metering.py"
   node --input-type=module - "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/sr.mjs" "${TMP_DIR}/global.mjs" "${TMP_DIR}/c-disabled.mjs" "${TMP_DIR}/global-disabled.mjs" <<'NODE'

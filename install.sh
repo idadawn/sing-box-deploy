@@ -2076,6 +2076,11 @@ setup_clash_rules_sync_timer() {
 # 自动更新 Cloudflare Pages 订阅配置
 # -----------------------------
 update_cloudflare_pages() {
+  # Retirement is sticky: a later full publish must not recreate public credentials.
+  if is_true "${SUB_LEGACY_RETIRED:-false}" || [[ -f "${SCRIPT_DIR}/cloudflare-pages-sub/.subscriptions-retired" ]]; then
+    log_error "旧订阅站已停用；如需更新安全规则，请使用 sync-clash-rules.sh --deploy"
+    return 1
+  fi
   # 检查是否配置了 CF_API_TOKEN
   if [[ -z "${CF_API_TOKEN:-}" ]]; then
     log_warn "未配置 CF_API_TOKEN，跳过 Cloudflare Pages 自动部署"

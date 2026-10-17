@@ -64,3 +64,7 @@ metering/*.key
 *.sqlite3-wal
 *.sqlite3-shm
 __pycache__/
+
+# Generated retired subscription site
+cloudflare-pages-sub/_worker.js
+cloudflare-pages-sub/.subscriptions-retired

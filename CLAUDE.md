@@ -21,6 +21,7 @@ The retired J server is out of scope. Never add, contact, or deploy to J.
 - `ISP_PORT_OVERRIDES` may pin a complete Trojan/Hysteria2 port pair by ISP ID without changing row slots. Preserve all existing assignments and reject unknown IDs, invalid ports and collisions.
 - TSV expiry accepts a valid `YYYY-MM-DD` or `never`. Non-expiring entries stay active in every output and monitor; all-non-expiring subscriptions advertise `expire=0`, while mixed subscriptions retain the earliest finite expiry.
 - Homepage hiding is presentation only, not authorization.
+- `SUB_LEGACY_RETIRED=true` closes only the legacy Pages project. Persist `.subscriptions-retired`, strip credential-bearing assets, keep safe rules, and never regenerate public subscriptions after retirement. Do not retire the authenticated gw project or stop proxy services as part of link retirement.
 - Optional `SUB_AUTH_ENABLED` adds D1-backed accounts, server-side ISP scoping and revocable subscription tokens. It defaults off; do not enable it or invalidate existing links without a requested cutover. Never roll an authenticated deployment back to public assets. Private auth modules must stay under `functions/`, never static assets.
 - Account login controls configuration access, not already-downloaded proxy credentials. Shared inbound passwords and historical unauthenticated Pages deployments require a separate coordinated cutover.
 

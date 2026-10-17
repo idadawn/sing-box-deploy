@@ -97,7 +97,7 @@ load_env_file() {
 
     key="$(trim "${line%%=*}")"
     case "${key}" in
-      CLASH_RULESET_UPSTREAM_REPO|CLASH_RULESET_UPSTREAM_BRANCH|CLASH_RULESET_RAW_BASE_URL|SHADOWROCKET_TELEGRAM_REPO|SHADOWROCKET_TELEGRAM_BRANCH|SHADOWROCKET_TELEGRAM_RAW_BASE_URL|CF_API_TOKEN|CF_ACCOUNT_ID|CF_PAGES_PROJECT)
+      CLASH_RULESET_UPSTREAM_REPO|CLASH_RULESET_UPSTREAM_BRANCH|CLASH_RULESET_RAW_BASE_URL|SHADOWROCKET_TELEGRAM_REPO|SHADOWROCKET_TELEGRAM_BRANCH|SHADOWROCKET_TELEGRAM_RAW_BASE_URL|CF_API_TOKEN|CF_ACCOUNT_ID|CF_PAGES_PROJECT|SUB_LEGACY_RETIRED|SUB_PORTAL_REDIRECT_URL|SUB_DOMAIN|SUB_AUTH_ENABLED)
         ;;
       *)
         continue
@@ -316,6 +316,9 @@ deploy_pages() {
     return 1
   }
 
+  # Rebuild the credential-free retired site when the flag or persisted marker
+  # is present. Ordinary authenticated/public projects are left untouched.
+  node "${SCRIPT_DIR}/scripts/build-retired.mjs" "${PAGES_DIR}"
   log_info "部署 Cloudflare Pages 项目 ${CF_PAGES_PROJECT}"
   (
     cd "${PAGES_DIR}"
