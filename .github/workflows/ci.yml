@@ -23,3 +23,6 @@ jobs:
         run: npm ci --prefix cloudflare-pages-sub
       - name: Verify authentication in Pages and D1 runtime
         run: node tests/auth-runtime.mjs
+
+      - name: Verify retired subscription site in Pages runtime
+        run: node tests/retired-runtime.mjs
