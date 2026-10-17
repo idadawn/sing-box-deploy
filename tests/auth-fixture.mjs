@@ -7,7 +7,7 @@ import { randomToken, passwordHash } from '../subscription-auth/auth.mjs';
 
 // Deliberately fake addresses/passwords. Never reads .env, ISP TSV or live servers.
 export const demoPassword = 'preview-only-passphrase';
-export async function buildFixture(directory) {
+export async function buildFixture(directory, authEnv = {}) {
   mkdirSync(resolve(directory, 'functions'), { recursive: true });
   const source = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
   const entries = ['dawn', 'zw', 'gj', 'crj'].map((id, i) => ({ id, host: '192.0.2.' + (i + 1), expires: 'never', trojan_port: 4400 + i, hysteria_port: 5400 + i }));
@@ -35,7 +35,7 @@ export async function buildFixture(directory) {
     TROJAN_DOMAIN: 'relay.example', HYSTERIA_DOMAIN: 'relay.example', CLASH_RULESET_BASE_URL: 'https://sub.example/rules',
   }))) writeFileSync(resolve(directory, 'functions', file), code);
   writeFileSync(resolve(directory, 'subscriptions.json'), JSON.stringify(entries.map(e => ({ ...e, v2: '/v2?isp=' + e.id, clash: '/c?isp=' + e.id, shadowrocket: '/v2?isp=' + e.id, shadowrocket_module: '/sr' })).concat({ id: 'tx', kind: 'tx-direct', host: '198.51.100.10', v2: '/tx-v2', clash: '/tx', shadowrocket: '/tx-v2', shadowrocket_module: '/sr' })));
-  buildAuth(directory, { SUB_AUTH_ENABLED: 'true', SUB_AUTH_D1_ID: '00000000-0000-0000-0000-000000000000' });
+  buildAuth(directory, { SUB_AUTH_ENABLED: 'true', SUB_AUTH_D1_ID: '00000000-0000-0000-0000-000000000000', ...authEnv });
   const index = resolve(directory, 'index.html');
   writeFileSync(index, readFileSync(index, 'utf8').replace('个人空间', '测试预览 · 虚构数据'));
   const secret = randomToken();

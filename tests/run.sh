@@ -168,6 +168,7 @@ if command -v node >/dev/null 2>&1; then
   node "${ROOT_DIR}/tests/ingress-overrides.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/auth.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/usage.mjs"
+  node "${ROOT_DIR}/tests/isp-credentials.mjs"
   python3 "${ROOT_DIR}/tests/metering.py"
   node --input-type=module - "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/sr.mjs" "${TMP_DIR}/global.mjs" "${TMP_DIR}/c-disabled.mjs" "${TMP_DIR}/global-disabled.mjs" <<'NODE'
 import assert from "node:assert/strict";

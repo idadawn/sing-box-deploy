@@ -4,13 +4,13 @@
 
 当前独立测试站为 **https://gw.1761.org**，使用独立的 `free-flight-gw` Pages 项目和 `free-flight-gw-auth` D1 数据库。原 `dl.1761.org` 及旧订阅保持原样。管理员预生成密码的账号可直接登录；一次性邀请方式仍可用于后续账号。密码和服务端 Secret 只保存在受限位置，不写入文档或 Git。
 
-测试站目前复用现有 LA 代理服务，尚未轮换旧节点凭据、启用真实流量采集或撤销旧站公开订阅。网站与账号数据库的隔离测试，不代表已经完成全量凭据收口；正式切换仍须遵循下方步骤。
+测试站使用 LA 上独立的 `sing-box-gw` 服务、端口和每 ISP 独立凭据，并接入真实计量；原代理不重启，`dl` 的旧订阅、端口和凭据不变。已有 gw 专属订阅链接不变，客户端更新后进入测试节点。个人计量只覆盖 gw 测试代理；公共整机网卡用量包含新旧服务。此阶段没有撤销旧站公开订阅，正式全量切换仍须遵循下方步骤。
 
 当前约定的正式分配：`dawn → dawn,tx`、`zw → zw,tx`、`gj → gj,tx`、`crj → crj,tx`。`tx` 是已迁至 LA 的独立直出服务。账号权限由 D1 保存，URL 参数和前端列表不能扩大权限。
 
 界面编号统一显示为 `DAWN / ZW / GJ / CRJ`，内部值不变。客户端节点去掉 `T-` 前缀，例如 `DAWN-TJ`、`DAWN-HY2`；直出为 `TX-TJ`、`TX-HY2`。页面精简为额度和导入按钮，链接与 Telegram 模块放入折叠区。
 
-每人个人 ISP 每月 100 GB，整机全员共用 1000 GB，UTC 每月 1 日重置；超额只提醒，不停止服务。公共直出适合视频和下载。后台使用签名采集报告，数据缺失显示“待接入”，不伪造 0 用量。接口、计量口径、迁移 SQL 和上线前置条件见 [流量计量](../metering/README.md)。正式启用前先执行更新后的 `schema.sql`；采集密钥与登录密钥必须分开。
+每人个人 ISP 每月 100 GB，整机全员共用 1000 GB，UTC 每月 1 日重置；超额只提醒，不停止服务。公共直出适合视频和下载。后台使用签名采集报告，数据缺失显示“待接入”，不伪造 0 用量。接口、计量口径、隔离部署和迁移 SQL 见 [流量计量](../metering/README.md)。正式启用前先执行更新后的 `schema.sql`；采集密钥与登录密钥必须分开。
 
 登录页与个人页面统一使用“自由翱翔”品牌。每条获授权线路提供“导入 Clash”“导入 v2rayNG”和“导入 Shadowrocket”：前两者将完整个人订阅 URL 编码为协议链接的 `url` 参数；Shadowrocket 使用 `shadowrocket://add/sub://` 加完整 URL 的 Base64 编码。账号的 ISP 与令牌不会因参数截断丢失。v2rayNG 入口用于 Android，Shadowrocket 入口用于 iPhone / iPad；未安装或浏览器无法唤起时，可复制同一专属链接手动导入。网页不自动启动客户端，也不宣称已经完成客户端内的导入。
 
@@ -77,3 +77,9 @@ wrangler pages dev . --ip=127.0.0.1 --port=8971
 `scripts/build-auth.mjs` 在生成订阅后按显式开关打包登录页和 middleware，删除原静态凭据载体。私有目录 `functions/_private` 只参与 Worker 构建。`index.html` 只在启用时替换为登录页；未启用时原首页与所有旧链接保持原行为。无需修改 DNS、WireGuard、sing-box 服务或现有端口。
 
 参考：[Pages D1 绑定](https://developers.cloudflare.com/pages/functions/bindings/#d1-databases)、[Pages middleware](https://developers.cloudflare.com/pages/functions/middleware/)、[Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/)。
+
+## gw 独立节点凭据
+
+`SUB_AUTH_ISP_CREDENTIALS_FILE` 可指定站外 0600 JSON 文件：顶层必须恰好包含全部有效 ISP ID，每项包含 `trojan`、`hysteria`、`obfs` 三个不同的 24–128 位 URL-safe 随机值。构建时验证所有值不重复，并仅注入 Functions 内部模板；公开清单和 `/api/me` 不包含这些字段，`/s` 在返回前按账号过滤。未启用鉴权时拒绝此选项，未指定文件时保持原有生成行为。
+
+该文件仅控制鉴权站的客户端凭据，不修改运行中的代理。必须先在独立代理配置匹配凭据、用 `ISP_PORT_OVERRIDES` 指向独立端口并实测，再发布 gw。公共直出仍使用独立的 `TX_DIRECT_*` 变量。`SUB_USAGE_SOURCE=la-gw` 写入 Pages 配置，避免测试账本与未来旧节点计量混用；`SUB_METER_KEY` 通过独立 Secret 注入，不写入 `.env.example` 或 Git。
