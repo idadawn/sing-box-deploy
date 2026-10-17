@@ -23,7 +23,7 @@ const key = 'fixture-meter-key-not-a-production-secret-123456789';
 const env = { SUB_AUTH_DB: db, SUB_METER_KEY: key };
 const catalog = [{ id: 'dawn' }, { id: 'zw' }, { id: 'tx', kind: 'tx-direct' }];
 const now = Math.floor(Date.now() / 1000), period = usagePeriod(now);
-const GB = 1e9;
+const GB = 1024 ** 3;
 function payload(sequence, counters) { return { source: 'la', generation: '0123456789abcdef0123456789abcdef', sequence, observed_at: now, period: period.id, counters }; }
 function counter(meter, up, down, extra = {}) { return { meter, upload_bytes: up, download_bytes: down, started_at: period.start, observed_at: now, has_gap: false, ...extra }; }
 async function send(data, { secret = key, timestamp = now } = {}) {
@@ -37,7 +37,7 @@ let usage = await accountUsage(db, env, ['dawn', 'tx']);
 assert.equal(usage.personal.used_bytes, 0); assert.equal(usage.shared.used_bytes, 0);
 assert.equal(usage.personal.status, 'initialized'); assert.equal(usage.personal.remaining_bytes, 100 * GB);
 assert.equal(usage.personal.quota_bytes, 100 * GB); assert.equal(usage.shared.quota_bytes, 1000 * GB);
-assert.equal(withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0' } }), usage.personal).headers.get('Subscription-Userinfo'), 'upload=0; download=0; total=100000000000; expire=0');
+assert.equal(withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0' } }), usage.personal).headers.get('Subscription-Userinfo'), 'upload=0; download=0; total=107374182400; expire=0');
 const initial = payload(1, [counter('machine', 10 * GB, 20 * GB), counter('isp:dawn', GB, 2 * GB), counter('isp:zw', 4 * GB, 5 * GB)]);
 assert.equal((await send(initial)).status, 200);
 assert.equal((await send(initial)).status, 200, 'Retry is idempotent');
@@ -50,7 +50,7 @@ assert.equal(usage.mode, 'notify_only');
 assert.ok(!JSON.stringify(usage).includes('zw'));
 assert.equal((await accountUsage(db, env, ['zw'])).personal.used_bytes, 9 * GB);
 const header = withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'expire=0' } }), usage.personal).headers.get('Subscription-Userinfo');
-assert.equal(header, 'upload=1000000000; download=2000000000; total=100000000000; expire=0');
+assert.equal(header, 'upload=1073741824; download=2147483648; total=107374182400; expire=0');
 assert.equal((await send(payload(0, [counter('machine', 1, 1)]))).status, 200);
 assert.equal((await accountUsage(db, env, ['dawn'])).shared.used_bytes, 30 * GB, 'Out-of-order reports cannot roll back totals');
 assert.equal((await send(payload(2, [counter('machine', 99 * GB, 99 * GB)]), { secret: 'wrong' })).status, 401);
@@ -68,10 +68,10 @@ assert.equal(usage.personal.remaining_bytes, 0);
 await send(payload(5, [counter('isp:dawn', 80 * GB, 30 * GB, { has_gap: true })]));
 usage = await accountUsage(db, env, ['dawn']);
 assert.equal(usage.personal.status, 'partial'); assert.equal(usage.personal.remaining_bytes, 0);
-assert.match(withUsageHeaders(new Response(''), usage.personal).headers.get('Subscription-Userinfo'), /upload=80000000000; download=30000000000; total=100000000000;/);
+assert.match(withUsageHeaders(new Response(''), usage.personal).headers.get('Subscription-Userinfo'), /upload=85899345920; download=32212254720; total=107374182400;/);
 const partialResponse = withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'expire=0' } }), usage.personal,
   { homepage: 'https://sub.example/' });
-assert.equal(partialResponse.headers.get('Subscription-Userinfo'), 'upload=80000000000; download=30000000000; total=100000000000; expire=0');
+assert.equal(partialResponse.headers.get('Subscription-Userinfo'), 'upload=85899345920; download=32212254720; total=107374182400; expire=0');
 assert.equal(partialResponse.headers.get('X-Subscription-Usage-Status'), 'partial');
 assert.equal(partialResponse.headers.get('X-Subscription-Usage-Started-At'), String(period.start));
 assert.equal(partialResponse.headers.get('Profile-Web-Page-URL'), 'https://sub.example/');

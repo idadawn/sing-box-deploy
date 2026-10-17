@@ -42,8 +42,10 @@ try {
   assert.equal(firstMonth.usage.personal.used_bytes, 0);
   assert.equal(firstMonth.usage.shared.used_bytes, 0);
   assert.equal(firstMonth.usage.personal.status, 'initialized');
+  assert.equal(firstMonth.usage.personal.quota_bytes / 1024 ** 3, 100, 'Client card denominator must render as 100 GB');
+  assert.equal(firstMonth.usage.shared.quota_bytes / 1024 ** 3, 1000, 'Shared denominator must render as 1000 GB');
   const firstSubscription = await request(firstMonth.entries[0].clash);
-  assert.equal(firstSubscription.headers.get('Subscription-Userinfo'), 'upload=0; download=0; total=100000000000; expire=0');
+  assert.equal(firstSubscription.headers.get('Subscription-Userinfo'), 'upload=0; download=0; total=107374182400; expire=0');
   assert.equal(firstSubscription.headers.get('X-Subscription-Usage-Status'), 'initialized');
   await request('/api/logout', firstCookie, {});
   const observed = Math.floor(Date.now() / 1000), period = new Date(observed * 1000).toISOString().slice(0, 7);
@@ -86,7 +88,7 @@ try {
           assert.equal(response.headers.get('Profile-Update-Interval'), '24');
           assert.equal(response.headers.get('X-Subscription-Usage-Status'), 'partial');
           assert.equal(response.headers.get('Profile-Web-Page-URL'), origin + '/');
-          assert.match(response.headers.get('Subscription-Userinfo'), /total=(100000000000|1000000000000);/);
+          assert.match(response.headers.get('Subscription-Userinfo'), /total=(107374182400|1073741824000);/);
           if (username === 'dawn') savedLinks.push({ url: entry[field], field, direct: entry.id === 'tx' });
         }
         const text = await response.text();
@@ -132,7 +134,7 @@ try {
     const response = await request(route + '?token=' + tokens.dawn);
     assert.equal(response.status, 200, 'Administrator can fetch all lines');
     if (route === '/s') assert.equal(response.headers.get('Subscription-Userinfo'), null);
-    else assert.match(response.headers.get('Subscription-Userinfo'), /total=1000000000000;/, 'Combined admin subscription uses the shared machine pool');
+    else assert.match(response.headers.get('Subscription-Userinfo'), /total=1073741824000;/, 'Combined admin subscription uses the shared machine pool');
     let text = await response.text(); if (route === '/v2') text = Buffer.from(text, 'base64').toString();
     for (const id of ['dawn', 'zw', 'gj', 'crj']) assert.ok(text.includes(route === '/s' ? '"id":"' + id + '"' : id.toUpperCase() + '-'));
   }
