@@ -8,8 +8,8 @@ export function usagePeriod(seconds = Date.now() / 1000) {
 }
 
 async function aggregate(db, source, period, meters, quota) {
-  const empty = { quota_bytes: quota, upload_bytes: null, download_bytes: null, used_bytes: null, remaining_bytes: null,
-    status: 'not_connected', over_quota: false, observed_at: null, started_at: null };
+  const empty = { quota_bytes: quota, upload_bytes: 0, download_bytes: 0, used_bytes: 0, remaining_bytes: quota,
+    status: 'initialized', over_quota: false, observed_at: null, started_at: null };
   if (!meters.length) return empty;
   try {
     const placeholders = meters.map(() => '?').join(',');
@@ -23,9 +23,9 @@ async function aggregate(db, source, period, meters, quota) {
     const stale = row.observed < Math.floor(Date.now() / 1000) - 300;
     const status = stale ? 'stale' : partial ? 'partial' : 'current';
     return { quota_bytes: quota, upload_bytes: row.up, download_bytes: row.down, used_bytes: used,
-      remaining_bytes: status === 'current' ? Math.max(0, quota - used) : null, status,
+      remaining_bytes: Math.max(0, quota - used), status,
       over_quota: used >= quota, observed_at: row.observed, started_at: row.started };
-  } catch { return { ...empty, status: 'unavailable' }; }
+  } catch { return { ...empty, upload_bytes: null, download_bytes: null, used_bytes: null, remaining_bytes: null, status: 'unavailable' }; }
 }
 
 // The caller must authorize the ISP before requesting its individual usage.
@@ -101,13 +101,24 @@ export async function ingestUsage(context, catalog) {
   return Response.json({ ok: true, period: period.id });
 }
 
-export function withUsageHeaders(response, usage) {
+export function withUsageHeaders(response, usage, { homepage } = {}) {
   const headers = new Headers(response.headers);
   const expiry = /(?:^|;\s*)expire=(\d+)/.exec(headers.get('Subscription-Userinfo') || '')?.[1] || '0';
-  if (usage.status === 'current') {
+  const measured = [usage.upload_bytes, usage.download_bytes, usage.quota_bytes]
+    .every(value => Number.isSafeInteger(value) && value >= 0) && usage.quota_bytes > 0;
+  headers.set('X-Subscription-Usage-Status', usage.status);
+  if (Number.isSafeInteger(usage.started_at)) headers.set('X-Subscription-Usage-Started-At', String(usage.started_at));
+  if (Number.isSafeInteger(usage.observed_at)) headers.set('X-Subscription-Usage-Updated-At', String(usage.observed_at));
+  if (homepage) headers.set('Profile-Web-Page-URL', homepage);
+  if (response.ok && !measured) {
+    // A database failure is not an empty month. Reject the refresh so clients
+    // retain their previous configuration and known usage instead of resetting it.
+    return new Response('流量数据暂不可用，请稍后更新订阅', { status: 503 });
+  }
+  if (response.ok && measured) {
     headers.set('Subscription-Userinfo', `upload=${usage.upload_bytes}; download=${usage.download_bytes}; total=${usage.quota_bytes}; expire=${expiry}`);
   } else {
-    // Do not advertise unknown/incomplete measurements as 0 GB used to clients.
+    // An unsuccessful subscription response must not advertise traffic metadata.
     headers.delete('Subscription-Userinfo');
   }
   return new Response(response.body, { status: response.status, headers });

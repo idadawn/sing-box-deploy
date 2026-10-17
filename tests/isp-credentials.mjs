@@ -74,7 +74,8 @@ try {
     const result = await request(path, cookies.dawn); assert.equal(result.status, 200);
     const body = await result.text();
     for (const value of Object.values(credentials)) for (const password of Object.values(value)) assert.ok(body.includes(password));
-    assert.equal(result.headers.get('Subscription-Userinfo'), null, 'Combined admin subscription has no single 100 GB quota');
+    if (path === '/s') assert.equal(result.headers.get('Subscription-Userinfo'), null);
+    else assert.match(result.headers.get('Subscription-Userinfo'), /upload=10000000000; download=20000000000; total=1000000000000;/, 'Combined admin subscription uses the shared quota');
   }
   const scoped = await request('/c?isp=zw&token=' + token);
   assert.equal(scoped.status, 200);

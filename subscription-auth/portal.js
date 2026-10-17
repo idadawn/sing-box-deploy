@@ -57,7 +57,7 @@ function usageSummary(usage, direct) {
   const [scale, unit] = bytes >= 1e9 ? [1e9, 'GB'] : bytes >= 1e6 ? [1e6, 'MB'] : bytes >= 1e3 ? [1e3, 'KB'] : [1, 'B'];
   const used = known ? (bytes / scale).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' ' + unit : '—';
   value.textContent = used + ' / ' + limit + ' GB';
-  const labels = { not_connected: '待接入', unavailable: '暂不可用', partial: '部分统计', stale: '待同步', current: '本月已用' };
+  const labels = { initialized: '本月已用', not_connected: '待接入', unavailable: '暂不可用', partial: '部分统计', stale: '待同步', current: '本月已用' };
   status.textContent = usage?.over_quota ? '已超额' : labels[usage?.status || 'not_connected'];
   status.className = 'usage-status' + (usage?.over_quota ? ' over' : '');
   box.append(label, value, status);

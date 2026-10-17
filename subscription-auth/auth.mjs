@@ -225,14 +225,16 @@ export function createHandler({ catalog, globalSource, handlers }) {
       return new Response(source, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
     }
     const response = await handlers[path]({ ...context, data: { ...context.data, allowedIsps: permitted } });
-    // An admin's combined subscription spans several independent quotas; do
-    // not label their sum as one 100 GB allowance. Scoped links use that ISP.
+    const headerOptions = { homepage: url.origin + '/' };
+    // Scoped admin links use that ISP's 100 GB allowance. The combined
+    // subscription uses the already-inclusive shared machine pool, never a sum.
     if (isAdmin && !direct) {
-      const usage = requested[0] ? await ispUsage(env.SUB_AUTH_DB, env, requested[0]) : { status: 'not_applicable' };
-      return withUsageHeaders(response, usage);
+      const usage = requested[0] ? await ispUsage(env.SUB_AUTH_DB, env, requested[0])
+        : (await accountUsage(env.SUB_AUTH_DB, env, assigned)).shared;
+      return withUsageHeaders(response, usage, headerOptions);
     }
     const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned);
-    return withUsageHeaders(response, direct ? usage.shared : usage.personal);
+    return withUsageHeaders(response, direct ? usage.shared : usage.personal, headerOptions);
   }
   return async context => {
     try {

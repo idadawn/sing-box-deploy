@@ -18,7 +18,7 @@
 - **整机公共额度**：读取公网物理网卡（LA 为 `eth0`）的 `tx_bytes + rx_bytes`。包含代理两段传输、隧道和管理等其他整机流量；不会把个人计数再加一遍。
 - **个人 ISP 额度**：sing-box V2Ray API 中对应 `isp-out-<id>` 的 outbound uplink/downlink 计数，统计代理载荷。个人入口里被规则送到 `direct-out` 的视频等流量不扣个人 ISP 额度。
 - 用户页面只返回其账号授权范围内的个人合计，以及大家共用的整机合计，不返回他人的明细。
-- 没有数据时显示 `— / 100 GB` 或 `— / 1000 GB` 和“待接入”；不会用假零、随机数据或整机总量冒充个人用量。
+- 当月数据库没有用量记录时按初始化用量 `0 / 100 GB` 或 `0 / 1000 GB` 显示，不受导入时间影响；有记录就读取当月累计值。查询异常不等于没有记录，不能用零覆盖已知用量。
 
 两个统计口径不同：个人是代理载荷，公共是网卡双向字节（含封装与两段转发），不能简单相加。网卡统计与云厂商账单也可能有边界和封装差异。
 
@@ -32,12 +32,12 @@
 - 未取得某条 ISP 计数时不补零，也不把旧数据的时间刷新成当前时间。
 - 每月一条待发送累计快照，断网时保留。报告经独立 `SUB_METER_KEY` HMAC 签名和时间戳验证；重试、重放和乱序不会重复累计或回退已记录的总量。
 - 采集账本具有持久化代次标识；同一月份发现新代次时拒绝接收，避免账本丢失后把新零基线覆盖成“统计正常”。须恢复原账本或经核验的人工迁移后继续。
-- 页面和客户端只在当月统计完整且新鲜时展示可信剩余额度；不完整、过期或不可用时标注状态，并移除会误报 0 用量的 `Subscription-Userinfo`。正常订阅更新仍保留。
+- 有效订阅始终携带 `Subscription-Userinfo`：无记录初始化为零，有记录显示已记录的上传、下载和额度；部分统计与待同步数据继续显示原值，网页保留状态。数据库查询异常时返回 503，让客户端保留上次配置与用量，不把异常当作零或移除流量条。
 - 页面超额提醒基于已知用量。没有任何停用账号、修改路由或限制网速的代码。
 
 ## gw 隔离测试部署
 
-2026-10-17 起，真实计量只向 `gw.1761.org` 的独立 D1 上报，source 为 `la-gw`。LA 原 `sing-box` 与 `sing-box-tx-direct` 二进制、配置、端口和进程保持不变，`dl` 不切换。
+2026-10-17 起，真实计量只向 `gw.1761.org` 的独立 D1 上报，source 为 `la-gw`。dl 首页已跳转至 gw，旧订阅继续兼容。LA 原 `sing-box` 与 `sing-box-tx-direct` 二进制、配置、端口和进程保持不变。
 
 | 组件 | 测试环境位置 |
 | --- | --- |
@@ -84,3 +84,16 @@ node tests/auth-runtime.mjs
 接口依据：[sing-box V2Ray API](https://sing-box.sagernet.org/configuration/experimental/v2ray-api/)、[v1.14.0 QueryStats 消息协议](https://github.com/SagerNet/sing-box/blob/v1.14.0/experimental/v2rayapi/stats.proto)。
 
 运行时服务名依据：[sing-box v1.14.0 stats.go](https://github.com/SagerNet/sing-box/blob/v1.14.0/experimental/v2rayapi/stats.go)。
+
+## 客户端流量条
+
+订阅响应通过 `Subscription-Userinfo: upload=...; download=...; total=...; expire=...` 下发数据库中的字节数，Clash 等客户端在更新订阅时绘制流量条。每人 100 GB、整机公共 1000 GB，保持十进制 GB（1 GB = 1,000,000,000 字节）；Clash Verge 按 1024 换算并标作 GB，因此卡片可能显示约 93.1 GB / 931 GB，实际额度未改。
+
+- 每月 **1 日 00:00 UTC** 查询新的月份；新月无记录先显示零。历史账本保留，不删除、不因登录、导入或更新订阅而重置。
+- `partial` 表示当前值从采集接入后开始累计，不是回填了整月历史。`stale` 保留最后一次采集数值，网页提示待同步。
+- `X-Subscription-Usage-Status`、`X-Subscription-Usage-Started-At` 和 `X-Subscription-Usage-Updated-At` 提供统计状态及时间；标准客户端可能不展示这些扩展字段，可通过 `Profile-Web-Page-URL` 回到网页查看。
+- 到期时间与流量重置日期分开；没有到期日的订阅继续下发 `expire=0`，不伪造一个月末到期日。
+- DAWN 单条订阅使用对应 ISP 的 100 GB 额度，汇总订阅使用已经包含各线路的整机 1000 GB 公共池；不把几条独立个人额度相加后冒充一个人的用量。
+- 后台每分钟采集，客户端卡片在客户端更新订阅时刷新，不是每分钟向客户端主动推送。
+
+依据：[Clash Verge 订阅元信息读取](https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src-tauri/src/config/prfitem.rs)、[流量单位换算](https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src/utils/parse-traffic.ts)。
