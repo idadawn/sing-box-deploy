@@ -34,7 +34,10 @@ export function buildRetired(directory, env = process.env) {
   if (!/^[a-z0-9-]+$/.test(project)) throw new Error('Invalid Pages project');
   // Strip all generated credentials, hidden aliases and Functions. A static
   // fallback must be safe even if the Worker does not run. No wildcard pass-through.
-  const keep = new Set(['rules', 'package.json', 'package-lock.json', 'README.md']);
+  const origin = target.origin + '/';
+  // Persist the guard before cleanup, and never delete it during a rebuild.
+  writeFileSync(marker, JSON.stringify({ target: origin, retired: true }) + '\n', { mode: 0o600 });
+  const keep = new Set(['rules', 'package.json', 'package-lock.json', 'README.md', '.subscriptions-retired']);
   for (const name of readdirSync(directory)) {
     const path = resolve(directory, name);
     if (!keep.has(name) || lstatSync(path).isSymbolicLink()) rmSync(path, { recursive: true, force: true });
@@ -44,12 +47,10 @@ export function buildRetired(directory, env = process.env) {
     const path = resolve(rules, name);
     if (!ruleFiles.includes(name) || !lstatSync(path).isFile()) rmSync(path, { recursive: true, force: true });
   }
-  const origin = target.origin + '/';
   writeFileSync(resolve(directory, '_worker.js'), `${retiredFetch.toString()}\nexport default { fetch(request, env) { return retiredFetch(request, env, ${JSON.stringify(origin)}, ${JSON.stringify(ruleFiles)}); } };\n`);
   writeFileSync(resolve(directory, '_routes.json'), JSON.stringify({ version: 1, include: ['/*'], exclude: [] }) + '\n');
   writeFileSync(resolve(directory, 'index.html'), `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="robots" content="noindex"><title>自由翱翔</title><p>旧订阅已停用，请前往 <a href="${origin}">新版登录入口</a>。</p></html>\n`);
   writeFileSync(resolve(directory, 'wrangler.toml'), `name = "${project}"\ncompatibility_date = "2025-01-01"\npages_build_output_dir = "."\n`);
-  writeFileSync(marker, JSON.stringify({ target: origin, retired: true }) + '\n', { mode: 0o600 });
   return true;
 }
 
