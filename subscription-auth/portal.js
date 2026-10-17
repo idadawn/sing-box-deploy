@@ -53,7 +53,10 @@ function usageSummary(usage, direct) {
   value.className = 'usage-value';
   const limit = (usage?.quota_bytes || (direct ? 1000 : 100) * 1e9) / 1e9;
   const known = usage?.used_bytes !== null && usage?.used_bytes !== undefined;
-  value.textContent = (known ? (usage.used_bytes / 1e9).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—') + ' / ' + limit + ' GB';
+  const bytes = usage?.used_bytes;
+  const [scale, unit] = bytes >= 1e9 ? [1e9, 'GB'] : bytes >= 1e6 ? [1e6, 'MB'] : bytes >= 1e3 ? [1e3, 'KB'] : [1, 'B'];
+  const used = known ? (bytes / scale).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' ' + unit : '—';
+  value.textContent = used + ' / ' + limit + ' GB';
   const labels = { not_connected: '待接入', unavailable: '暂不可用', partial: '部分统计', stale: '待同步', current: '本月已用' };
   status.textContent = usage?.over_quota ? '已超额' : labels[usage?.status || 'not_connected'];
   status.className = 'usage-status' + (usage?.over_quota ? ' over' : '');
