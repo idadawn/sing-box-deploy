@@ -97,3 +97,13 @@ node tests/auth-runtime.mjs
 - 后台每分钟采集，客户端卡片在客户端更新订阅时刷新，不是每分钟向客户端主动推送。
 
 依据：[Clash Verge 订阅元信息读取](https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src-tauri/src/config/prfitem.rs)、[流量单位换算](https://github.com/clash-verge-rev/clash-verge-rev/blob/dev/src/utils/parse-traffic.ts)。
+
+## 多服务器迁移账本
+
+`SUB_USAGE_SOURCE` 保留原身份。`SUB_USAGE_EXTRA_SOURCES` 是逗号分隔的额外采集源白名单，最多合计 16 个；每台并行服务器使用全新的唯一 source 和全新的本地 SQLite，旧机继续使用原账本。D1 表无需改结构：仍以 `(source, period, meter)` 分别保存单调累计值，查询时跨源求和。重复、乱序报告不会重复加量；每个 source 的 generation 检查仍独立生效。
+
+迁移和回退均不删除源、不复制旧机累计数到新机、不改变 100/1000 GB 额度。公共池是所有已登记机器物理网卡总量之和，个人池是各机器同名 ISP outbound 的合计，不再叠加到公共池。并行期间仍显示总共 1000 GB 应用额度，而不是每台各获得 1000 GB。
+
+只有旧机完成最终上报、明确下线后，才把其 source 加入 `SUB_USAGE_INACTIVE_SOURCES`：它的历史用量继续参与合计，但不再要求新的采样时间。仍在运行的排空旧机不能标为 inactive。缺少某个活跃源的数据时显示部分统计；数据库没有当月记录仍按初始化零用量显示。
+
+详见 [GW 快速迁移](../migration/README.md)。
