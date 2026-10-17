@@ -1,4 +1,5 @@
 const $ = id => document.getElementById(id);
+const KIB = 1024, MIB = KIB ** 2, GIB = KIB ** 3;
 let invite = new URLSearchParams(location.hash.slice(1)).get('invite');
 if (invite) history.replaceState(null, '', location.pathname); // Never send invitation in Referer/query logs.
 function message(text = '', failed = false) { $('message').textContent = text; $('message').className = failed ? 'error' : ''; }
@@ -51,10 +52,10 @@ function usageSummary(usage, direct) {
   const label = document.createElement('p'), value = document.createElement('p'), status = document.createElement('span');
   label.className = 'hint'; label.textContent = direct ? '公共流量 · 整机共用' : '个人流量';
   value.className = 'usage-value';
-  const limit = (usage?.quota_bytes || (direct ? 1000 : 100) * 1e9) / 1e9;
+  const limit = (usage?.quota_bytes || (direct ? 1000 : 100) * GIB) / GIB;
   const known = usage?.used_bytes !== null && usage?.used_bytes !== undefined;
   const bytes = usage?.used_bytes;
-  const [scale, unit] = bytes >= 1e9 ? [1e9, 'GB'] : bytes >= 1e6 ? [1e6, 'MB'] : bytes >= 1e3 ? [1e3, 'KB'] : [1, 'B'];
+  const [scale, unit] = bytes >= GIB ? [GIB, 'GB'] : bytes >= MIB ? [MIB, 'MB'] : bytes >= KIB ? [KIB, 'KB'] : [1, 'B'];
   const used = known ? (bytes / scale).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' ' + unit : '—';
   value.textContent = used + ' / ' + limit + ' GB';
   const labels = { initialized: '本月已用', not_connected: '待接入', unavailable: '暂不可用', partial: '部分统计', stale: '待同步', current: '本月已用' };

@@ -67,7 +67,7 @@ try {
   assert.equal(me.usage.shared.used_bytes, 30e9);
   for (const [i, entry] of me.entries.filter(e => e.id !== 'tx').entries()) {
     assert.equal(entry.usage.used_bytes, (i + 1) * 3e9, 'Every card has its own ISP measurement');
-    assert.equal(entry.usage.quota_bytes, 100e9);
+    assert.equal(entry.usage.quota_bytes, 100 * 1024 ** 3);
   }
   const token = new URL(me.entries[0].clash, 'https://fixture.example').searchParams.get('token');
   for (const path of ['/v2?raw=1', '/c', '/s']) {
@@ -75,11 +75,11 @@ try {
     const body = await result.text();
     for (const value of Object.values(credentials)) for (const password of Object.values(value)) assert.ok(body.includes(password));
     if (path === '/s') assert.equal(result.headers.get('Subscription-Userinfo'), null);
-    else assert.match(result.headers.get('Subscription-Userinfo'), /upload=10000000000; download=20000000000; total=1000000000000;/, 'Combined admin subscription uses the shared quota');
+    else assert.match(result.headers.get('Subscription-Userinfo'), /upload=10000000000; download=20000000000; total=1073741824000;/, 'Combined admin subscription uses the shared quota');
   }
   const scoped = await request('/c?isp=zw&token=' + token);
   assert.equal(scoped.status, 200);
-  assert.match(scoped.headers.get('Subscription-Userinfo'), /upload=2000000000; download=4000000000; total=100000000000;/);
+  assert.match(scoped.headers.get('Subscription-Userinfo'), /upload=2000000000; download=4000000000; total=107374182400;/);
   const scopedBody = await scoped.text();
   assert.ok(scopedBody.includes(credentials.zw.trojan) && !scopedBody.includes(credentials.dawn.trojan));
   const ordinary = await (await request('/api/me?admin=true&username=dawn', cookies.zw)).json();

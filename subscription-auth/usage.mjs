@@ -1,4 +1,5 @@
-const GB = 1000 ** 3;
+// Clients label binary gigabytes as GB. Keep quota bytes aligned with that UI.
+const GIB = 1024 ** 3;
 const encoder = new TextEncoder();
 const reply = (error, status) => Response.json({ error }, { status });
 export function usagePeriod(seconds = Date.now() / 1000) {
@@ -30,15 +31,15 @@ async function aggregate(db, source, period, meters, quota) {
 
 // The caller must authorize the ISP before requesting its individual usage.
 export function ispUsage(db, env, id, period = usagePeriod()) {
-  return aggregate(db, env.SUB_USAGE_SOURCE || 'la', period, ['isp:' + id], 100 * GB);
+  return aggregate(db, env.SUB_USAGE_SOURCE || 'la', period, ['isp:' + id], 100 * GIB);
 }
 
 export async function accountUsage(db, env, allowed) {
   const period = usagePeriod();
   const source = env.SUB_USAGE_SOURCE || 'la';
-  const personal = await aggregate(db, source, period, allowed.filter(id => id !== 'tx').map(id => 'isp:' + id), 100 * GB);
+  const personal = await aggregate(db, source, period, allowed.filter(id => id !== 'tx').map(id => 'isp:' + id), 100 * GIB);
   // This is the public NIC total, not personal + direct counters. No double counting.
-  const shared = await aggregate(db, source, period, ['machine'], 1000 * GB);
+  const shared = await aggregate(db, source, period, ['machine'], 1000 * GIB);
   return { period, mode: 'notify_only', personal, shared };
 }
 
