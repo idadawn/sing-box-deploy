@@ -11,7 +11,12 @@ const directory = mkdtempSync(resolve(tmpdir(), 'cody-auth-runtime-'));
 const wrangler = process.env.WRANGLER_BIN || resolve('cloudflare-pages-sub/node_modules/.bin/wrangler');
 let processHandle;
 try {
-  await buildFixture(directory);
+  const credentials = Object.fromEntries(['dawn', 'zw', 'gj', 'crj'].map(id => [id,
+    Object.fromEntries(['trojan', 'hysteria', 'obfs'].map(type => [type, `runtime-${id}-${type}-`.padEnd(40, 'x')]))]));
+  const credentialsFile = resolve(directory, 'private-credentials.json');
+  writeFileSync(credentialsFile, JSON.stringify(credentials), { mode: 0o600 });
+  await buildFixture(directory, { SUB_AUTH_ISP_CREDENTIALS_FILE: credentialsFile });
+  rmSync(credentialsFile);
   const migrated = spawnSync(wrangler, ['d1', 'execute', 'SUB_AUTH_DB', '--local', '--file=fixture.sql'], { cwd: directory, encoding: 'utf8', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
   assert.equal(migrated.status, 0, migrated.stderr);
   rmSync(resolve(directory, 'fixture.sql'));
@@ -70,6 +75,9 @@ try {
         const text = await response.text();
         const content = ['v2', 'shadowrocket'].includes(field) ? Buffer.from(text, 'base64').toString() : text;
         for (const foreign of ['dawn', 'zw', 'gj', 'crj'].filter(x => x !== username)) assert.ok(!content.includes(foreign.toUpperCase() + '-'), 'Foreign node leaked');
+        for (const [id, values] of Object.entries(credentials)) {
+          for (const password of Object.values(values)) assert.equal(content.includes(password), entry.id !== 'tx' && id === username, 'Credential scope mismatch');
+        }
       }
     }
     assert.equal((await request('/api/logout', cookie, {})).status, 200);

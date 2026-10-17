@@ -131,7 +131,7 @@ def stats_sample(config):
         config.get('grpcurl', '/usr/local/bin/grpcurl'), '-plaintext', '-max-time', '10',
         '-import-path', str(Path(__file__).resolve().parent), '-proto', 'stats.proto',
         '-d', '{"patterns":["outbound>>>"],"reset":false}', address,
-        'experimental.v2rayapi.StatsService/QueryStats'], stderr=subprocess.DEVNULL, timeout=15)
+        'v2ray.core.app.stats.command.StatsService/QueryStats'], stderr=subprocess.DEVNULL, timeout=15)
     if before != epoch():
         raise ValueError('Service restarted while sampling')
     values = {item['name']: int(item.get('value', 0)) for item in json.loads(raw).get('stat', [])}

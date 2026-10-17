@@ -1,6 +1,7 @@
-// QueryStats wire contract from sing-box v1.14.0 experimental/v2rayapi/stats.proto.
+// QueryStats messages follow sing-box v1.14.0 stats.proto; stats.go registers
+// the service under the V2Ray-compatible package name at runtime.
 syntax = "proto3";
-package experimental.v2rayapi;
+package v2ray.core.app.stats.command;
 message QueryStatsRequest {
   string pattern = 1;
   bool reset = 2;

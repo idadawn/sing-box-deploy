@@ -1,0 +1,28 @@
+[Unit]
+Description=Isolated GW proxy with private traffic statistics
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sing-box
+Group=sing-box
+WorkingDirectory=/var/lib/sing-box-gw
+StateDirectory=sing-box-gw
+StateDirectoryMode=0700
+ExecStartPre=/opt/sing-box-gw/sing-box check -c /etc/sing-box-gw/config.json
+ExecStart=/opt/sing-box-gw/sing-box run -c /etc/sing-box-gw/config.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+UMask=0077
+CPUWeight=50
+MemoryHigh=128M
+MemoryMax=192M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sing-box-gw
+
+[Install]
+WantedBy=multi-user.target
