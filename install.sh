@@ -818,7 +818,9 @@ validate_config() {
   validate_domain_like "TROJAN_DOMAIN" "${TROJAN_DOMAIN}"
   validate_domain_like "HYSTERIA_DOMAIN" "${HYSTERIA_DOMAIN}"
 
-  if [[ "${TROJAN_DOMAIN}" == "${HYSTERIA_DOMAIN}" ]]; then
+  # Pages-only publication may reuse one valid certificate SNI on distinct ports.
+  # The server installer keeps its existing ACME domain validation.
+  if (( PAGES_ONLY != 1 )) && [[ "${TROJAN_DOMAIN}" == "${HYSTERIA_DOMAIN}" ]]; then
     log_error "TROJAN_DOMAIN 和 HYSTERIA_DOMAIN 不应相同"
     exit 1
   fi
