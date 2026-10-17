@@ -34,9 +34,10 @@ async function send(data, { secret = key, timestamp = now } = {}) {
 assert.equal(usagePeriod(Date.parse('2026-10-31T23:59:59Z') / 1000).id, '2026-10');
 assert.equal(usagePeriod(Date.parse('2026-11-01T00:00:00Z') / 1000).id, '2026-11');
 let usage = await accountUsage(db, env, ['dawn', 'tx']);
-assert.equal(usage.personal.used_bytes, null); assert.equal(usage.shared.used_bytes, null);
+assert.equal(usage.personal.used_bytes, 0); assert.equal(usage.shared.used_bytes, 0);
+assert.equal(usage.personal.status, 'initialized'); assert.equal(usage.personal.remaining_bytes, 100 * GB);
 assert.equal(usage.personal.quota_bytes, 100 * GB); assert.equal(usage.shared.quota_bytes, 1000 * GB);
-assert.equal(withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0' } }), usage.personal).headers.get('Subscription-Userinfo'), null);
+assert.equal(withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0' } }), usage.personal).headers.get('Subscription-Userinfo'), 'upload=0; download=0; total=100000000000; expire=0');
 const initial = payload(1, [counter('machine', 10 * GB, 20 * GB), counter('isp:dawn', GB, 2 * GB), counter('isp:zw', 4 * GB, 5 * GB)]);
 assert.equal((await send(initial)).status, 200);
 assert.equal((await send(initial)).status, 200, 'Retry is idempotent');
@@ -66,12 +67,33 @@ assert.equal(usage.personal.over_quota, true); assert.equal(usage.shared.over_qu
 assert.equal(usage.personal.remaining_bytes, 0);
 await send(payload(5, [counter('isp:dawn', 80 * GB, 30 * GB, { has_gap: true })]));
 usage = await accountUsage(db, env, ['dawn']);
-assert.equal(usage.personal.status, 'partial'); assert.equal(usage.personal.remaining_bytes, null);
-assert.equal(withUsageHeaders(new Response(''), usage.personal).headers.get('Subscription-Userinfo'), null);
+assert.equal(usage.personal.status, 'partial'); assert.equal(usage.personal.remaining_bytes, 0);
+assert.match(withUsageHeaders(new Response(''), usage.personal).headers.get('Subscription-Userinfo'), /upload=80000000000; download=30000000000; total=100000000000;/);
+const partialResponse = withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'expire=0' } }), usage.personal,
+  { homepage: 'https://sub.example/' });
+assert.equal(partialResponse.headers.get('Subscription-Userinfo'), 'upload=80000000000; download=30000000000; total=100000000000; expire=0');
+assert.equal(partialResponse.headers.get('X-Subscription-Usage-Status'), 'partial');
+assert.equal(partialResponse.headers.get('X-Subscription-Usage-Started-At'), String(period.start));
+assert.equal(partialResponse.headers.get('Profile-Web-Page-URL'), 'https://sub.example/');
+assert.equal(usage.personal.remaining_bytes, 0, 'Remaining quota follows recorded monthly usage');
+assert.ok(withUsageHeaders(new Response(''), { ...usage.personal, status: 'stale' }).headers.get('Subscription-Userinfo'), 'Stale values remain visible with their original update timestamp');
+for (const bad of [
+  { ...usage.personal, status: 'unavailable', upload_bytes: null },
+  { ...usage.personal, download_bytes: null }, { ...usage.personal, upload_bytes: -1 },
+]) {
+  const response = withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'upload=0; total=1' } }), bad);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('Subscription-Userinfo'), null);
+}
+assert.equal(withUsageHeaders(new Response('', { status: 410 }), usage.personal).headers.get('Subscription-Userinfo'), null);
+
 sql.prepare('UPDATE monthly_usage SET observed_at=? WHERE meter=?').run(now - 600, 'isp:dawn');
 assert.equal((await accountUsage(db, env, ['dawn'])).personal.status, 'stale');
 sql.prepare('UPDATE monthly_usage SET period=?').run('1999-01');
 usage = await accountUsage(db, env, ['dawn']);
-assert.equal(usage.personal.used_bytes, null); assert.equal(usage.shared.used_bytes, null, 'Previous UTC months do not consume this month');
+assert.equal(usage.personal.used_bytes, 0); assert.equal(usage.shared.used_bytes, 0, 'Previous UTC months do not consume this month');
+assert.equal(usage.personal.remaining_bytes, 100 * GB);
+assert.equal(usage.personal.status, 'initialized');
+assert.equal((await accountUsage({ prepare() { throw new Error('Database unavailable'); } }, env, ['dawn'])).personal.used_bytes, null, 'Database faults must not masquerade as a fresh zero');
 sql.close();
 console.log('Monthly usage: UTC periods, private scope, shared NIC pool, signed/idempotent reports and honest unknown states passed');

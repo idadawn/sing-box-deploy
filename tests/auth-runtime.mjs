@@ -35,13 +35,24 @@ try {
   const request = (path, cookie, body) => fetch(origin + path, { headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body ? { Origin: origin, 'Content-Type': 'application/json' } : {}) }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
   for (const route of ['/c', '/v2', '/s', '/global-extension.js', '/subscriptions.json', '/tx', '/tx-v2']) assert.equal((await request(route)).status, 401, route);
   for (const route of ['/nodes.yaml', '/functions/v2.js', '/functions/_private/catalog.mjs', '/.dev.vars', '/fixture.sql', '/wrangler.toml']) assert.equal((await request(route)).status, 404, route);
+  const firstLogin = await request('/api/login', null, { username: 'dawn', password: demoPassword });
+  assert.equal(firstLogin.status, 200);
+  const firstCookie = firstLogin.headers.get('Set-Cookie').split(';')[0];
+  const firstMonth = await (await request('/api/me', firstCookie)).json();
+  assert.equal(firstMonth.usage.personal.used_bytes, 0);
+  assert.equal(firstMonth.usage.shared.used_bytes, 0);
+  assert.equal(firstMonth.usage.personal.status, 'initialized');
+  const firstSubscription = await request(firstMonth.entries[0].clash);
+  assert.equal(firstSubscription.headers.get('Subscription-Userinfo'), 'upload=0; download=0; total=100000000000; expire=0');
+  assert.equal(firstSubscription.headers.get('X-Subscription-Usage-Status'), 'initialized');
+  await request('/api/logout', firstCookie, {});
   const observed = Math.floor(Date.now() / 1000), period = new Date(observed * 1000).toISOString().slice(0, 7);
   const started = Date.parse(period + '-01T00:00:00Z') / 1000;
   const meterKey = readFileSync(resolve(directory, '.dev.vars'), 'utf8').match(/^SUB_METER_KEY=(.+)$/m)[1];
   const report = JSON.stringify({ source: 'la', generation: '0123456789abcdef0123456789abcdef', period, sequence: 1, observed_at: observed,
     counters: ['machine', 'isp:dawn', 'isp:zw', 'isp:gj', 'isp:crj'].map(meter => ({ meter,
       upload_bytes: meter === 'machine' ? 500e9 : 60e9, download_bytes: meter === 'machine' ? 600e9 : 50e9,
-      started_at: started, observed_at: observed, has_gap: false })) });
+      started_at: observed, observed_at: observed, has_gap: true })) });
   const signature = createHmac('sha256', meterKey).update(observed + '.' + report).digest('hex');
   const meterResponse = await fetch(origin + '/api/usage/report', { method: 'POST', body: report,
     headers: { 'Content-Type': 'application/json', 'X-Meter-Timestamp': String(observed), 'X-Meter-Signature': signature } });
@@ -59,6 +70,8 @@ try {
     assert.equal(me.usage.shared.used_bytes, 1100e9);
     assert.equal(me.usage.personal.over_quota, true);
     assert.equal(me.usage.mode, 'notify_only');
+    assert.equal(me.usage.personal.status, 'partial');
+    assert.equal(me.usage.personal.remaining_bytes, 0);
     tokens[username] = new URL(me.entries[0].v2, origin).searchParams.get('token');
     const repeated = await (await request('/api/me', cookie)).json();
     assert.deepEqual(repeated.entries, me.entries, 'Refreshing the portal must not rotate subscription URLs');
@@ -71,6 +84,8 @@ try {
         assert.match(response.headers.get('Cache-Control'), /no-store/);
         if (field !== 'extension') {
           assert.equal(response.headers.get('Profile-Update-Interval'), '24');
+          assert.equal(response.headers.get('X-Subscription-Usage-Status'), 'partial');
+          assert.equal(response.headers.get('Profile-Web-Page-URL'), origin + '/');
           assert.match(response.headers.get('Subscription-Userinfo'), /total=(100000000000|1000000000000);/);
           if (username === 'dawn') savedLinks.push({ url: entry[field], field, direct: entry.id === 'tx' });
         }
@@ -116,7 +131,8 @@ try {
   for (const route of ['/c', '/v2', '/s']) {
     const response = await request(route + '?token=' + tokens.dawn);
     assert.equal(response.status, 200, 'Administrator can fetch all lines');
-    assert.equal(response.headers.get('Subscription-Userinfo'), null, 'No combined administrator quota');
+    if (route === '/s') assert.equal(response.headers.get('Subscription-Userinfo'), null);
+    else assert.match(response.headers.get('Subscription-Userinfo'), /total=1000000000000;/, 'Combined admin subscription uses the shared machine pool');
     let text = await response.text(); if (route === '/v2') text = Buffer.from(text, 'base64').toString();
     for (const id of ['dawn', 'zw', 'gj', 'crj']) assert.ok(text.includes(route === '/s' ? '"id":"' + id + '"' : id.toUpperCase() + '-'));
   }
