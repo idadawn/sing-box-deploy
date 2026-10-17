@@ -3060,6 +3060,7 @@ REDIRECTS
     "${pages_dir}/_redirects"
 
   validate_generated_pages_assets "${pages_dir}"
+  node "${SCRIPT_DIR}/scripts/portal-redirect.mjs" "${pages_dir}"
   node "${SCRIPT_DIR}/scripts/build-auth.mjs" "${pages_dir}"
 
   log_success "订阅配置文件已更新"
