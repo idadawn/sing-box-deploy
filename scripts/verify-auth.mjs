@@ -7,6 +7,7 @@ const file = process.env.SUB_AUTH_VERIFY_FILE;
 if (!file || (statSync(file).mode & 0o077)) throw new Error('SUB_AUTH_VERIFY_FILE must be a private 0600 file');
 const accounts = JSON.parse(readFileSync(file, 'utf8'));
 assert.ok(Array.isArray(accounts) && accounts.length >= 2, 'Need at least two accounts to check cross-account isolation');
+assert.ok(accounts.some(account => !account.can_view_all), 'Need an ordinary account to verify isolation');
 const fetchPath = (path, token) => fetch(origin + path, {
   redirect: 'manual', signal: AbortSignal.timeout(15000),
   headers: { 'User-Agent': 'Clash.Meta', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
@@ -32,8 +33,8 @@ for (const account of accounts) {
     }
   }
   const foreign = accounts.flatMap(a => a.scopes).find(id => !account.scopes.includes(id));
-  assert.ok(foreign, 'Need disjoint ISP scopes');
-  assert.equal((await fetchPath('/c?isp=' + encodeURIComponent(foreign), account.token)).status, 403);
+  if (foreign) assert.equal((await fetchPath('/c?isp=' + encodeURIComponent(foreign), account.token)).status, 403);
+  else assert.equal(account.can_view_all, true, 'All-line access must be explicitly expected for this verification account');
   assert.equal((await fetchPath('/tx', account.token)).status, account.scopes.includes('tx') ? 200 : 403);
   console.log(`Verified private subscription scope: ${account.username}`);
 }

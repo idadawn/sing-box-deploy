@@ -66,6 +66,7 @@ function usageSummary(usage, direct) {
 async function load() {
   const data = await api('/api/me');
   $('accountName').textContent = data.username.toUpperCase();
+  $('linesHeading').textContent = data.is_admin ? '全部线路' : '我的线路';
   $('entries').replaceChildren(...data.entries.map(entry => {
     const card = document.createElement('article'); card.className = 'panel';
     const head = document.createElement('div'), title = document.createElement('h2'), expiry = document.createElement('span'), address = document.createElement('p');
@@ -73,7 +74,7 @@ async function load() {
     head.className = 'entry-header'; title.textContent = direct ? '公共直出' : entry.id.toUpperCase();
     expiry.textContent = direct ? '视频 · 下载' : '个人 ISP';
     address.className = 'address'; address.textContent = entry.host || '';
-    head.append(title, expiry); card.append(head, usageSummary(direct ? data.usage?.shared : data.usage?.personal, direct), importActions(entry));
+    head.append(title, expiry); card.append(head, usageSummary(entry.usage || (direct ? data.usage?.shared : data.usage?.personal), direct), importActions(entry));
     const links = document.createElement('details'), summary = document.createElement('summary');
     summary.textContent = '链接与模块'; links.className = 'subscription-details';
     links.append(summary, address, linkRow('Clash', entry.clash), linkRow('v2rayN / v2rayNG / Shadowrocket', entry.v2));

@@ -1,4 +1,4 @@
-import { accountUsage, ingestUsage, withUsageHeaders } from './usage.mjs';
+import { accountUsage, ispUsage, ingestUsage, withUsageHeaders } from './usage.mjs';
 
 const encoder = new TextEncoder();
 const COOKIE = '__Host-sub-session';
@@ -189,18 +189,26 @@ export function createHandler({ catalog, globalSource, handlers }) {
       ? (routes.has(path) ? await tokenUser(token, env.SUB_AUTH_DB, env.SUB_AUTH_KEY) : null)
       : await sessionUser(request, env.SUB_AUTH_DB);
     if (!user) return error('请先登录或使用专属订阅链接', 401);
-    const allowed = scopes(user);
+    const assigned = scopes(user);
+    // Only trusted deployment configuration grants all-line access. Login,
+    // enabled-account and token validation above still apply to administrators.
+    const admins = (env.SUB_ADMIN_USERS || '').split(',').map(name => name.trim().toLowerCase()).filter(Boolean);
+    const isAdmin = admins.every(name => USERNAME.test(name)) && admins.includes(user.username);
+    const allowed = isAdmin ? catalog.map(entry => entry.id) : assigned;
     if (path === '/api/me' || path === '/subscriptions.json') {
       const personalToken = await subscriptionToken(user, env.SUB_AUTH_KEY);
-      const entries = catalog.filter(entry => allowed.includes(entry.id)).map(entry => {
+      const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned);
+      const entries = await Promise.all(catalog.filter(entry => allowed.includes(entry.id)).map(async entry => {
         const result = { ...entry };
         for (const key of ['v2', 'clash', 'shadowrocket']) {
           if (result[key]) { const link = new URL(result[key], url.origin); link.searchParams.set('token', personalToken); result[key] = link.pathname + link.search; }
         }
         if (entry.kind !== 'tx-direct') result.extension = '/s?isp=' + encodeURIComponent(entry.id) + '&token=' + encodeURIComponent(personalToken);
+        result.usage = entry.kind === 'tx-direct' ? usage.shared : isAdmin
+          ? await ispUsage(env.SUB_AUTH_DB, env, entry.id, usage.period) : usage.personal;
         return result;
-      });
-      return json(path === '/api/me' ? { username: user.username, entries, usage: await accountUsage(env.SUB_AUTH_DB, env, allowed) } : entries);
+      }));
+      return json(path === '/api/me' ? { username: user.username, is_admin: isAdmin, entries, usage } : entries);
     }
     const requested = url.searchParams.getAll('isp');
     if (requested.length > 1 || requested.some(id => !allowed.includes(id))) return error('没有这条线路的访问权限', 403);
@@ -217,7 +225,13 @@ export function createHandler({ catalog, globalSource, handlers }) {
       return new Response(source, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
     }
     const response = await handlers[path]({ ...context, data: { ...context.data, allowedIsps: permitted } });
-    const usage = await accountUsage(env.SUB_AUTH_DB, env, allowed);
+    // An admin's combined subscription spans several independent quotas; do
+    // not label their sum as one 100 GB allowance. Scoped links use that ISP.
+    if (isAdmin && !direct) {
+      const usage = requested[0] ? await ispUsage(env.SUB_AUTH_DB, env, requested[0]) : { status: 'not_applicable' };
+      return withUsageHeaders(response, usage);
+    }
+    const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned);
     return withUsageHeaders(response, direct ? usage.shared : usage.personal);
   }
   return async context => {
