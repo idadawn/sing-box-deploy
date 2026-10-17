@@ -12,6 +12,8 @@ export function buildAuth(directory, env = process.env) {
     return false;
   }
   if (!/^[a-f0-9-]{36}$/.test(env.SUB_AUTH_D1_ID || '')) throw new Error('SUB_AUTH_D1_ID is required to enable login');
+  const admins = [...new Set((env.SUB_ADMIN_USERS || '').split(',').map(name => name.trim().toLowerCase()).filter(Boolean))];
+  if (!admins.every(name => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(name))) throw new Error('Invalid subscription administrator');
   const catalog = JSON.parse(readFileSync(resolve(directory, 'subscriptions.json'), 'utf8'));
   let globalSource = readFileSync(resolve(directory, 'global-extension.js'), 'utf8');
   if (!globalSource.match(/const ispEntries = JSON\.parse\(atob\("([A-Za-z0-9+/=]+)"\)\)/)) throw new Error('Global extension scope marker missing');
@@ -68,7 +70,7 @@ export function buildAuth(directory, env = process.env) {
   if (!/^[a-z0-9-]+$/.test(project)) throw new Error('Invalid Pages project');
   const source = env.SUB_USAGE_SOURCE || 'la';
   if (!/^[a-z0-9-]{1,40}$/.test(source)) throw new Error('Invalid usage source');
-  writeFileSync(resolve(directory, 'wrangler.toml'), `name = "${project}"\ncompatibility_date = "2025-01-01"\npages_build_output_dir = "."\n\n[vars]\nSUB_USAGE_SOURCE = "${source}"\n\n[[d1_databases]]\nbinding = "SUB_AUTH_DB"\ndatabase_name = "subscription-auth"\ndatabase_id = "${env.SUB_AUTH_D1_ID}"\n`);
+  writeFileSync(resolve(directory, 'wrangler.toml'), `name = "${project}"\ncompatibility_date = "2025-01-01"\npages_build_output_dir = "."\n\n[vars]\nSUB_USAGE_SOURCE = "${source}"\nSUB_ADMIN_USERS = "${admins.join(',')}"\n\n[[d1_databases]]\nbinding = "SUB_AUTH_DB"\ndatabase_name = "subscription-auth"\ndatabase_id = "${env.SUB_AUTH_D1_ID}"\n`);
   return true;
 }
 

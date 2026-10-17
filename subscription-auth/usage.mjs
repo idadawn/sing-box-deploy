@@ -28,6 +28,11 @@ async function aggregate(db, source, period, meters, quota) {
   } catch { return { ...empty, status: 'unavailable' }; }
 }
 
+// The caller must authorize the ISP before requesting its individual usage.
+export function ispUsage(db, env, id, period = usagePeriod()) {
+  return aggregate(db, env.SUB_USAGE_SOURCE || 'la', period, ['isp:' + id], 100 * GB);
+}
+
 export async function accountUsage(db, env, allowed) {
   const period = usagePeriod();
   const source = env.SUB_USAGE_SOURCE || 'la';

@@ -15,7 +15,7 @@ try {
     Object.fromEntries(['trojan', 'hysteria', 'obfs'].map(type => [type, `runtime-${id}-${type}-`.padEnd(40, 'x')]))]));
   const credentialsFile = resolve(directory, 'private-credentials.json');
   writeFileSync(credentialsFile, JSON.stringify(credentials), { mode: 0o600 });
-  await buildFixture(directory, { SUB_AUTH_ISP_CREDENTIALS_FILE: credentialsFile });
+  await buildFixture(directory, { SUB_AUTH_ISP_CREDENTIALS_FILE: credentialsFile, SUB_ADMIN_USERS: 'dawn' });
   rmSync(credentialsFile);
   const migrated = spawnSync(wrangler, ['d1', 'execute', 'SUB_AUTH_DB', '--local', '--file=fixture.sql'], { cwd: directory, encoding: 'utf8', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
   assert.equal(migrated.status, 0, migrated.stderr);
@@ -52,7 +52,9 @@ try {
     assert.equal(login.status, 200, 'Login in actual Workers runtime');
     const cookie = login.headers.get('Set-Cookie').split(';')[0];
     const me = await (await request('/api/me', cookie)).json();
-    assert.deepEqual(me.entries.map(e => e.id), [username, 'tx']);
+    assert.deepEqual(me.entries.map(e => e.id), username === 'dawn' ? ['dawn', 'zw', 'gj', 'crj', 'tx'] : [username, 'tx']);
+    assert.equal(me.is_admin, username === 'dawn');
+    for (const entry of me.entries) assert.equal(entry.usage.used_bytes, entry.id === 'tx' ? 1100e9 : 110e9);
     assert.equal(me.usage.personal.used_bytes, 110e9);
     assert.equal(me.usage.shared.used_bytes, 1100e9);
     assert.equal(me.usage.personal.over_quota, true);
@@ -74,9 +76,9 @@ try {
         }
         const text = await response.text();
         const content = ['v2', 'shadowrocket'].includes(field) ? Buffer.from(text, 'base64').toString() : text;
-        for (const foreign of ['dawn', 'zw', 'gj', 'crj'].filter(x => x !== username)) assert.ok(!content.includes(foreign.toUpperCase() + '-'), 'Foreign node leaked');
+        for (const foreign of ['dawn', 'zw', 'gj', 'crj'].filter(x => x !== entry.id)) assert.ok(!content.includes(foreign.toUpperCase() + '-'), 'Foreign node leaked');
         for (const [id, values] of Object.entries(credentials)) {
-          for (const password of Object.values(values)) assert.equal(content.includes(password), entry.id !== 'tx' && id === username, 'Credential scope mismatch');
+          for (const password of Object.values(values)) assert.equal(content.includes(password), entry.id !== 'tx' && id === entry.id, 'Credential scope mismatch');
         }
       }
     }
@@ -109,7 +111,14 @@ try {
     assert.ok(updated, 'An existing subscription URL must retrieve the newly published configuration');
   }
   for (const route of ['/c', '/v2', '/s', '/global-extension.js']) {
-    assert.equal((await request(route + '?isp=zw&token=' + tokens.dawn)).status, 403, 'Cross-account request');
+    assert.equal((await request(route + '?isp=gj&token=' + tokens.zw)).status, 403, 'Cross-account request');
+  }
+  for (const route of ['/c', '/v2', '/s']) {
+    const response = await request(route + '?token=' + tokens.dawn);
+    assert.equal(response.status, 200, 'Administrator can fetch all lines');
+    assert.equal(response.headers.get('Subscription-Userinfo'), null, 'No combined administrator quota');
+    let text = await response.text(); if (route === '/v2') text = Buffer.from(text, 'base64').toString();
+    for (const id of ['dawn', 'zw', 'gj', 'crj']) assert.ok(text.includes(route === '/s' ? '"id":"' + id + '"' : id.toUpperCase() + '-'));
   }
   const moduleResponse = await request('/sr');
   assert.equal(moduleResponse.status, 200);
@@ -117,7 +126,7 @@ try {
   assert.ok(module.includes('DOMAIN-SUFFIX,telegram.org,PROXY'));
   assert.ok(module.includes('RULE-SET,' + origin + '/rules/shadowrocket-telegram.list,PROXY'));
   assert.ok(!module.includes('trojan://') && !module.includes('hysteria2://'));
-  console.log('Actual Cloudflare Pages + D1 runtime: four accounts isolated; all personal/direct formats pass; private files blocked; existing client URLs refresh after configuration changes');
+  console.log('Actual Cloudflare Pages + D1 runtime: DAWN sees all lines; ordinary accounts stay isolated; per-line usage and all formats pass; private files blocked; existing client URLs refresh after configuration changes');
 } finally {
   if (processHandle && processHandle.exitCode === null) {
     await new Promise(resolve => { processHandle.once('exit', resolve); processHandle.kill('SIGTERM'); });
