@@ -425,35 +425,17 @@ sudo ./install.sh --no-start
 
 ## 更换接入服务器
 
-迁移包包含 `.env` 和私有 ISP 清单，使用 AES-256-CBC、PBKDF2 和 SHA-256 完整性信息保护。证书缓存、运行配置和系统状态不会迁移，新服务器会重新生成。
-
-在旧服务器导出：
+现在的 **GW 独立服务**使用 [快速迁移工具](migration/README.md)：
 
 ```bash
-cd ~/app/sing-box-deploy
-./migrate.sh export
+python3 migrate-gw.py --help
 ```
 
-把生成的 `migration-*.tar.gz.enc` 复制到新服务器，并将密码通过另一条安全通道保存。在新服务器：
+支持第二台服务器预部署、全部线路 Trojan/Hysteria2 实测、按 CRJ 等线路分批切换、回退和中断恢复。保持账号、专属订阅 URL、节点密码、端口、名称与 ISP 出口不变；新旧服务器独立采集，月用量合并，UTC 每月 1 日清零规则不变。
 
-```bash
-git clone https://github.com/idadawn/sing-box-deploy.git
-cd sing-box-deploy
-./migrate.sh import /path/to/migration-*.tar.gz.enc
-sudo ./install.sh
-```
+**工具不会停止或重启旧机，也不自动改 DNS。** 切换通过现有专属订阅下发新入口，客户端更新后使用新机；原有连接留在旧机。客户端更新可能自行重建连接，跨厂商不能保证已有 TCP/QUIC 会话转移到新服务器。旧机须保留到客户端更新、长连接结束，并完成证书续期接管；单纯等待一个 DNS TTL 不足以安全下线。
 
-建议按以下顺序切换：
-
-1. 提前降低 Trojan 与 Hysteria2 域名的 DNS TTL。
-2. 在新服务器安全组放行全部实际使用的 Trojan/TCP、Hysteria2/UDP 和 SSH 端口。
-3. 导入迁移包并完成安装；DNS-01 允许新旧服务器在切换前并行存在。
-4. 在新服务器检查服务、监听端口、ISP 出口和订阅内容。
-5. 将两个入口域名的 A 记录切到新服务器公网 IP。
-6. 用真实客户端验证 Trojan、Hysteria2 和各 ISP 出口。
-7. 旧服务器至少保留一个 DNS TTL 周期，确认稳定后再下线。
-
-迁移过程中保持域名、入口密码、ISP 清单行顺序和基础端口不变，客户端订阅 URL 无需修改。迁移包本身仍应按密钥材料管理；不要提交到 Git 或放在公开网盘。
+旧版单机的 `.env` / ISP TSV 备份仍可使用 `./migrate.sh export`、`./migrate.sh import <包>`，其加密包不含当前 GW 独立运行配置、证书、二进制或计量配置，不能替代上面的 GW 迁移流程。迁移私有目录与包不得提交 Git 或公开。
 
 ## 安全清单
 

@@ -68,3 +68,7 @@ __pycache__/
 # Generated retired subscription site
 cloudflare-pages-sub/_worker.js
 cloudflare-pages-sub/.subscriptions-retired
+
+# Private migration journals and runtime snapshots
+.migration-private/
+gw-migration-*/

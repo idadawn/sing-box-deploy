@@ -15,7 +15,7 @@ try {
     Object.fromEntries(['trojan', 'hysteria', 'obfs'].map(type => [type, `runtime-${id}-${type}-`.padEnd(40, 'x')]))]));
   const credentialsFile = resolve(directory, 'private-credentials.json');
   writeFileSync(credentialsFile, JSON.stringify(credentials), { mode: 0o600 });
-  await buildFixture(directory, { SUB_AUTH_ISP_CREDENTIALS_FILE: credentialsFile, SUB_ADMIN_USERS: 'dawn' });
+  await buildFixture(directory, { SUB_AUTH_ISP_CREDENTIALS_FILE: credentialsFile, SUB_ADMIN_USERS: 'dawn', SUB_USAGE_EXTRA_SOURCES: 'dmit' });
   rmSync(credentialsFile);
   const migrated = spawnSync(wrangler, ['d1', 'execute', 'SUB_AUTH_DB', '--local', '--file=fixture.sql'], { cwd: directory, encoding: 'utf8', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
   assert.equal(migrated.status, 0, migrated.stderr);
@@ -144,6 +144,17 @@ try {
   assert.ok(module.includes('DOMAIN-SUFFIX,telegram.org,PROXY'));
   assert.ok(module.includes('RULE-SET,' + origin + '/rules/shadowrocket-telegram.list,PROXY'));
   assert.ok(!module.includes('trojan://') && !module.includes('hysteria2://'));
+  // Parallel target has a fresh ledger identity. Retries cannot duplicate usage.
+  const second = JSON.stringify({ ...JSON.parse(report), source: 'dmit', generation: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    counters: JSON.parse(report).counters.map(c => ({ ...c, upload_bytes: 1024, download_bytes: 2048 })) });
+  const secondSignature = createHmac('sha256', meterKey).update(observed + '.' + second).digest('hex');
+  for (let i = 0; i < 2; i++) {
+    const response = await fetch(origin + '/api/usage/report', { method: 'POST', body: second,
+      headers: { 'Content-Type': 'application/json', 'X-Meter-Timestamp': String(observed), 'X-Meter-Signature': secondSignature } });
+    assert.equal(response.status, 200);
+  }
+  const mergedUsage = await request('/v2?isp=dawn&token=' + tokens.dawn);
+  assert.equal(mergedUsage.headers.get('Subscription-Userinfo'), 'upload=60000001024; download=50000002048; total=107374182400; expire=0');
   console.log('Actual Cloudflare Pages + D1 runtime: DAWN sees all lines; ordinary accounts stay isolated; per-line usage and all formats pass; private files blocked; existing client URLs refresh after configuration changes');
 } finally {
   if (processHandle && processHandle.exitCode === null) {

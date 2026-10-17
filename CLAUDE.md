@@ -84,6 +84,7 @@ The optional portal tracks 100 GB per-account ISP quota within a shared 1000 GB 
 | --- | --- |
 | `install.sh` | Safe env parsing, validation, sing-box JSON generation, network/UFW/systemd setup, Pages asset generation and deployment |
 | `manage.sh` | Status, logs, egress checks, backups, encrypted migration export, uninstall |
+| `migrate-gw.py` / `migration/` | Parallel isolated GW deployment, verified per-line cutover and rollback; never stop/restart source |
 | `migrate.sh` | AES-256-CBC/PBKDF2 export and validated import of `.env` plus ISP TSV |
 | `.env.example` | Non-secret configuration reference |
 | `isp-list.example.tsv` | Field-only private inventory example |
@@ -122,3 +123,13 @@ sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_fasto
 ```
 
 Test both TCP and UDP ingress, every active ISP SOCKS5 exit, subscription response headers, YAML parsing, and the fixed-ingress-to-fixed-egress invariant.
+
+## GW migration invariants
+
+- Use `migrate-gw.py` for the current isolated GW service. The old env-only migration is not sufficient.
+- Never stop/restart source proxy services, change credentials/ports/routes, edit live client profiles or change DNS as part of parallel preparation/cutover.
+- Preserve the Cloudflare auth database/signing keys and subscription URLs. Retired dl stays retired.
+- Target must be a distinct host with the same CPU architecture, no existing GW paths/units/ports, and a fresh unique meter source. Never clone the SQLite ledger to a concurrent collector.
+- Aggregate registered meter sources; keep old source IDs for historical totals even on rollback. Mark an old source inactive only after final reporting and intentional decommission; no automatic decommission.
+- Require fresh real TCP/HY2 egress checks before cutover, verify existing scoped subscription URLs after publication, and use compare-and-swap env updates. Publication errors retain a private recovery journal.
+- Certificate files are initially copied without DNS credentials. Keep renewal on the old host during the overlap, use sync-certs, and arrange independent target renewal before decommission.

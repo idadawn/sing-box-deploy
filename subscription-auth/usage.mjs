@@ -8,20 +8,37 @@ export function usagePeriod(seconds = Date.now() / 1000) {
     end: Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) / 1000, timezone: 'UTC' };
 }
 
-async function aggregate(db, source, period, meters, quota) {
+// Keep every old source in the allowlist: its historical bytes must remain
+// visible after cutover and rollback. Never reuse a source for another ledger.
+export function usageSources(env) {
+  const primary = env.SUB_USAGE_SOURCE || 'la';
+  const extras = (env.SUB_USAGE_EXTRA_SOURCES || '').split(',').map(s => s.trim()).filter(Boolean);
+  const sources = [...new Set([primary, ...extras])];
+  const inactive = (env.SUB_USAGE_INACTIVE_SOURCES || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (sources.length > 16 || !sources.every(s => /^[a-z0-9-]{1,40}$/.test(s)) ||
+      !inactive.every(s => sources.includes(s))) throw new Error('Invalid usage sources');
+  return { sources, active: sources.filter(s => !inactive.includes(s)) };
+}
+
+async function aggregate(db, env, period, meters, quota) {
   const empty = { quota_bytes: quota, upload_bytes: 0, download_bytes: 0, used_bytes: 0, remaining_bytes: quota,
     status: 'initialized', over_quota: false, observed_at: null, started_at: null };
   if (!meters.length) return empty;
   try {
+    const { sources, active } = usageSources(env);
     const placeholders = meters.map(() => '?').join(',');
+    const sourceSlots = sources.map(() => '?').join(',');
+    const activeSlots = active.length ? active.map(() => '?').join(',') : 'NULL';
     const row = await db.prepare(`SELECT COUNT(*) AS n, SUM(upload_bytes) AS up, SUM(download_bytes) AS down,
-      MIN(observed_at) AS observed, MAX(started_at) AS started, MAX(has_gap) AS gap
-      FROM monthly_usage WHERE source = ? AND period = ? AND meter IN (${placeholders})`)
-      .bind(source, period.id, ...meters).first();
+      MIN(CASE WHEN source IN (${activeSlots}) THEN observed_at END) AS observed,
+      SUM(CASE WHEN source IN (${activeSlots}) THEN 1 ELSE 0 END) AS active_n,
+      MIN(started_at) AS started, MAX(started_at) AS latest_start, MAX(has_gap) AS gap
+      FROM monthly_usage WHERE source IN (${sourceSlots}) AND period = ? AND meter IN (${placeholders})`)
+      .bind(...active, ...active, ...sources, period.id, ...meters).first();
     if (!row.n) return empty;
     const used = row.up + row.down;
-    const partial = row.n !== meters.length || row.started > period.start || row.gap > 0;
-    const stale = row.observed < Math.floor(Date.now() / 1000) - 300;
+    const partial = row.active_n !== meters.length * active.length || row.latest_start > period.start || row.gap > 0;
+    const stale = row.observed !== null && row.observed < Math.floor(Date.now() / 1000) - 300;
     const status = stale ? 'stale' : partial ? 'partial' : 'current';
     return { quota_bytes: quota, upload_bytes: row.up, download_bytes: row.down, used_bytes: used,
       remaining_bytes: Math.max(0, quota - used), status,
@@ -31,15 +48,14 @@ async function aggregate(db, source, period, meters, quota) {
 
 // The caller must authorize the ISP before requesting its individual usage.
 export function ispUsage(db, env, id, period = usagePeriod()) {
-  return aggregate(db, env.SUB_USAGE_SOURCE || 'la', period, ['isp:' + id], 100 * GIB);
+  return aggregate(db, env, period, ['isp:' + id], 100 * GIB);
 }
 
 export async function accountUsage(db, env, allowed) {
   const period = usagePeriod();
-  const source = env.SUB_USAGE_SOURCE || 'la';
-  const personal = await aggregate(db, source, period, allowed.filter(id => id !== 'tx').map(id => 'isp:' + id), 100 * GIB);
+  const personal = await aggregate(db, env, period, allowed.filter(id => id !== 'tx').map(id => 'isp:' + id), 100 * GIB);
   // This is the public NIC total, not personal + direct counters. No double counting.
-  const shared = await aggregate(db, source, period, ['machine'], 1000 * GIB);
+  const shared = await aggregate(db, env, period, ['machine'], 1000 * GIB);
   return { period, mode: 'notify_only', personal, shared };
 }
 
@@ -71,8 +87,10 @@ export async function ingestUsage(context, catalog) {
   const signatureBytes = Uint8Array.from(signature.match(/../g), byte => parseInt(byte, 16));
   if (!await crypto.subtle.verify('HMAC', key, signatureBytes, encoder.encode(timestamp + '.' + raw))) return reply('Unauthorized', 401);
   let data; try { data = JSON.parse(raw); } catch { return reply('Invalid report', 400); }
+  let sources;
+  try { ({ sources } = usageSources(env)); } catch { return reply('Metering unavailable', 503); }
   const integer = n => Number.isSafeInteger(n) && n >= 0;
-  if (!data || data.source !== (env.SUB_USAGE_SOURCE || 'la') || !/^[a-f0-9]{32}$/.test(data.generation || '') || !integer(data.sequence) || !integer(data.observed_at) || data.observed_at > now + 60 ||
+  if (!data || !sources.includes(data.source) || !/^[a-f0-9]{32}$/.test(data.generation || '') || !integer(data.sequence) || !integer(data.observed_at) || data.observed_at > now + 60 ||
       !Array.isArray(data.counters) || !data.counters.length || data.counters.length > catalog.length + 1) return reply('Invalid report', 400);
   const period = usagePeriod(data.observed_at);
   if (data.period !== period.id) return reply('Invalid period', 400);

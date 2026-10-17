@@ -95,5 +95,26 @@ assert.equal(usage.personal.used_bytes, 0); assert.equal(usage.shared.used_bytes
 assert.equal(usage.personal.remaining_bytes, 100 * GB);
 assert.equal(usage.personal.status, 'initialized');
 assert.equal((await accountUsage({ prepare() { throw new Error('Database unavailable'); } }, env, ['dawn'])).personal.used_bytes, null, 'Database faults must not masquerade as a fresh zero');
+// New and draining hosts have independent cumulative ledgers. Sum them once.
+env.SUB_USAGE_EXTRA_SOURCES = 'dmit,la,dmit';
+assert.equal((await send({ ...initial, source: 'dmit', generation: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' })).status, 200);
+assert.equal((await send({ ...initial, source: 'dmit', generation: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' })).status, 200);
+assert.equal((await send(initial)).status, 200);
+usage = await accountUsage(db, env, ['dawn']);
+assert.equal(usage.personal.used_bytes, 6 * GB);
+assert.equal(usage.shared.used_bytes, 60 * GB);
+assert.equal(usage.personal.quota_bytes, 100 * GB, 'Parallel hosts do not multiply quota');
+assert.equal((await send({ ...initial, source: 'dmit' })).status, 409, 'Each source independently guards generation');
+sql.prepare('UPDATE monthly_usage SET observed_at=? WHERE source=? AND period=?').run(now - 600, 'la', period.id);
+assert.equal((await accountUsage(db, env, ['dawn'])).personal.status, 'stale');
+env.SUB_USAGE_INACTIVE_SOURCES = 'la';
+usage = await accountUsage(db, env, ['dawn']);
+assert.equal(usage.personal.used_bytes, 6 * GB, 'Drained source remains in historical totals');
+assert.equal(usage.personal.status, 'current');
+env.SUB_USAGE_EXTRA_SOURCES += ',next';
+assert.equal((await accountUsage(db, env, ['dawn'])).personal.status, 'partial', 'Missing active host must not look complete');
+env.SUB_USAGE_INACTIVE_SOURCES = 'unknown';
+assert.equal((await send(initial)).status, 503);
+assert.equal((await accountUsage(db, env, ['dawn'])).personal.status, 'unavailable');
 sql.close();
 console.log('Monthly usage: UTC periods, private scope, shared NIC pool, signed/idempotent reports and honest unknown states passed');
