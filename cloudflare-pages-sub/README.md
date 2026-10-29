@@ -5,20 +5,20 @@
 - `Clash`、`v2rayN / v2rayNG` 与 Shadowrocket 节点订阅由私有 ISP 清单动态生成
 - `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
 - 主页从部署时生成的 `subscriptions.json` 读取独立订阅和到期日；`homepageHiddenIds` 可隐藏私用编号，追加 `?all=1` 可显示全部编号（都不构成访问控制）
-- 启用 `TX_DIRECT_ENABLED` 后，主页节点列表追加“TX 直出”，`?isp=tx` 可直接选中；对应 Clash `/tx`、v2ray/Shadowrocket `/tx-v2`，不加入原 ISP 订阅或容灾组。
+- 启用 `TX_DIRECT_ENABLED` 后，主页节点列表追加“LA 直出”，`?isp=tx` 可直接选中；对应 Clash `/tx`、v2ray/Shadowrocket `/tx-v2`，不加入原 ISP 订阅或容灾组。
 - 单 ISP 订阅同时返回 `Profile-Title: <编号>`、`Profile-Update-Interval: 24` 与无引号、无扩展名的 `filename=<编号>`/`filename*`，兼容采用不同响应头命名的客户端
 - 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
 - 私有清单到期时间为 `never` 的 ISP 不因日期被过滤，单独订阅返回 `expire=0`，首页显示“有效期不限”；混合订阅的到期提示取最早的有限日期。
 - AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
 - `/c` 和全局扩展为 PayPal 官网、API、静态资源、PayPal.Me 及中国站设置优先 ISP 规则和代理 DNS，使用 `paypal.com`、`paypalobjects.com`、`paypal.me`、`paypal.cn`、`paypal.com.cn` 域名后缀；独立 `/tx` 不加入 ISP 节点。
 - Hysteria2 默认不声明固定上下行带宽，由客户端和服务端使用自适应拥塞控制
-- 直连 `/c` 订阅的交互策略组使用 Hysteria2 优先的 `fallback`，`TX 大流量` 组仍优先 Trojan/TCP；`♻️ 自动选择` 名称仅为兼容已保存选择
+- 直连 `/c` 订阅的交互策略组使用 Hysteria2 优先的 `fallback`，`LA 大流量` 组仍优先 Trojan/TCP；`♻️ 自动选择` 名称仅为兼容已保存选择
 - Apple 策略组默认直连且保留手动代理选项；已保存的历史选择可能需要手动切回 `DIRECT`
 - GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，国外 DNS 经交互故障转移组访问 DoH
 - `/c` 与 `/tx` 默认将 DNS 查询经 `🛡️ 自动容灾` 发往 Cloudflare/Google DoH；仅 `geosite:cn,private` 使用国内直连 DoH。禁用并发 `fallback`，避免未知海外域名同时发给国内解析器；节点域名解析仍使用独立的 `proxy-server-nameserver`。更新订阅并重新加载配置后生效，已有客户端 DNS 覆盖需要单独检查。
-- Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 TX 大流量` 组
+- Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 LA 大流量` 组
 - 默认视频清单包含 YouTube、Twitch、Vimeo、Dailymotion、`rou.video` 及其已确认的 `rn221.xyz` / `rn227.xyz` / `rn248.xyz` 资源域名
-- 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 TX 大流量`，服务端显式使用 T 公网出口
+- 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 LA 大流量`，服务端显式使用 T 公网出口
 - 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
 - `/sr` 提供不含凭据的 Shadowrocket Telegram 高优先级模块，引用每日同步的 blackmatrix7 专用规则镜像
 
@@ -104,7 +104,7 @@ wrangler pages deploy . --project-name="${CF_PAGES_PROJECT:-sub-converter}" --br
 1. 配置 → 新建
 2. 订阅 URL 填写 `https://<SUB_DOMAIN>/c`
 3. 下载并启用
-4. 使用带 `isp=<编号>` 的独立链接时，所有 ISP 流量都固定到该编号；大流量规则仍可使用 `📦 TX 大流量`
+4. 使用带 `isp=<编号>` 的独立链接时，所有 ISP 流量都固定到该编号；大流量规则仍可使用 `📦 LA 大流量`
 5. `🚀 节点选择` 默认使用 `🛡️ 自动容灾`；仅在确认 UDP 链路稳定时再手动选择 Hysteria2
 
 ### Clash Verge + 第三方机场
