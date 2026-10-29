@@ -223,7 +223,7 @@ assert.equal(clashResponse.headers.get("profile-title"), "DEMO");
 assert.equal(clashResponse.headers.get("profile-update-interval"), "24");
 assert.match(clashBody, /name: "DEMO-TJ"/);
 assert.match(clashBody, /name: "DEMO-HY2"/);
-assert.match(clashBody, /name: "📦 TX 大流量"\n    type: fallback/);
+assert.match(clashBody, /name: "📦 LA 大流量"\n    type: fallback/);
 assert.match(clashBody, /name: "♻️ 自动选择"\n    type: fallback/);
 assert.match(clashBody, /name: "🛡️ ISP 出口自动"\n    type: fallback/);
 assert.match(clashBody, /name: "🤖 AI 自动"\n    type: fallback/);
@@ -247,7 +247,7 @@ const paypalDomains = ['paypal.com', 'paypalobjects.com', 'paypal.me', 'paypal.c
 for (const domain of paypalDomains) {
   const rule = `- 'DOMAIN-SUFFIX,${domain},🛡️ ISP 出口自动'`;
   assert.ok(clashBody.includes(rule));
-  assert.ok(clashBody.indexOf(rule) < clashBody.indexOf("DOMAIN-SUFFIX,bulk.example,📦 TX 大流量"));
+  assert.ok(clashBody.indexOf(rule) < clashBody.indexOf("DOMAIN-SUFFIX,bulk.example,📦 LA 大流量"));
   assert.ok(clashBody.indexOf(rule) < clashBody.indexOf('RULE-SET,loyalsoldier-applications,DIRECT'));
   assert.ok(dnsBlock.includes(`"+.${domain}":\n      - "https://1.1.1.1/dns-query#🛡️ ISP 出口自动"`));
 }
@@ -266,7 +266,7 @@ const clashForceTcpRuleIndex = clashBody.indexOf(`- '${clashForceTcpRule}'`);
 assert.ok(clashForceTcpRuleIndex > clashClientDirectRuleIndex);
 assert.ok(clashForceTcpRuleIndex < clashBody.indexOf("- 'RULE-SET,loyalsoldier-applications,DIRECT'"));
 assert.ok(clashForceTcpRuleIndex < clashBody.indexOf("DOMAIN-SUFFIX,ai.example,🤖 AI 服务"));
-assert.ok(clashForceTcpRuleIndex < clashBody.indexOf("DOMAIN-SUFFIX,bulk.example,📦 TX 大流量"));
+assert.ok(clashForceTcpRuleIndex < clashBody.indexOf("DOMAIN-SUFFIX,bulk.example,📦 LA 大流量"));
 
 const allClashResponse = await clashModule.onRequest({
   request: new Request("https://sub.example/c"),
@@ -291,13 +291,13 @@ for (const name of ["🛡️ 自动容灾", "♻️ 自动选择", "🛡️ ISP 
     previous = current;
   }
 }
-const bulkBlock = groupBlock(allClashBody, "📦 TX 大流量");
+const bulkBlock = groupBlock(allClashBody, "📦 LA 大流量");
 assert.match(bulkBlock, /type: fallback/);
 assert.doesNotMatch(bulkBlock, /tolerance:/);
 let previousBulkNode = -1;
 for (const node of expectedBulkNodes) {
   const current = bulkBlock.indexOf(`- "${node}"`);
-  assert.ok(current > previousBulkNode, `📦 TX 大流量 proxy order for ${node}`);
+  assert.ok(current > previousBulkNode, `📦 LA 大流量 proxy order for ${node}`);
   previousBulkNode = current;
 }
 const appleBlock = groupBlock(allClashBody, "🍎 苹果服务");
@@ -375,7 +375,7 @@ const globalForceTcpRuleIndex = globalConfig.rules.indexOf(clashForceTcpRule);
 assert.ok(globalForceTcpRuleIndex > globalClientDirectRuleIndex);
 assert.ok(globalForceTcpRuleIndex < globalConfig.rules.indexOf("RULE-SET,loyalsoldier-applications,DIRECT"));
 assert.ok(globalForceTcpRuleIndex < globalConfig.rules.indexOf("DOMAIN-SUFFIX,ai.example,🛡️ ISP 最终出口"));
-assert.ok(globalForceTcpRuleIndex < globalConfig.rules.indexOf("DOMAIN-SUFFIX,bulk.example,📦 TX 大流量"));
+assert.ok(globalForceTcpRuleIndex < globalConfig.rules.indexOf("DOMAIN-SUFFIX,bulk.example,📦 LA 大流量"));
 
 const preservedDnsConfig = globalMain({
   proxies: [],
@@ -386,6 +386,18 @@ const preservedDnsConfig = globalMain({
 assert.deepEqual(plain(preservedDnsConfig.dns["proxy-server-nameserver"]), [
   "https://resolver.example/bootstrap",
 ]);
+
+// Reapplying the new extension to an old TX-labelled config keeps bulk routes
+// on the same proxies without retaining a broken legacy group or a transit loop.
+const legacyOverlay = JSON.parse(JSON.stringify(globalConfig).replaceAll('📦 LA 大流量', '📦 TX 大流量'));
+legacyOverlay.rules.unshift('IP-CIDR,198.51.100.0/24,📦 TX 大流量,no-resolve');
+const renamedOverlay = globalMain(legacyOverlay);
+assert.equal(renamedOverlay["proxy-groups"].filter(g => g.name === '📦 LA 大流量').length, 1);
+assert.equal(renamedOverlay["proxy-groups"].some(g => g.name === '📦 TX 大流量'), false);
+assert.ok(renamedOverlay.rules.includes('IP-CIDR,198.51.100.0/24,📦 LA 大流量,no-resolve'));
+assert.equal(renamedOverlay.rules.some(r => r.includes('📦 TX 大流量')), false);
+assert.deepEqual(plain(renamedOverlay.proxies), plain(globalConfig.proxies));
+assert.deepEqual(plain(renamedOverlay["proxy-groups"].find(g => g.name === '📦 LA 大流量').proxies), expectedBulkNodes);
 
 const globalDisabledScript = await readFile(process.argv[7], "utf8");
 const globalDisabledMain = vm.runInNewContext(`${globalDisabledScript}\nmain`, { atob });

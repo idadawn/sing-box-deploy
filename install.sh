@@ -1752,7 +1752,7 @@ verify_subscription() {
       local client_direct_c_ok=1
       local tcp_stability_c_ok=1
       if is_true "${DIRECT_BULK_ENABLED}" && csv_list_contains "${DIRECT_BULK_APPS}" "telegram" \
-        && ! grep -Fq 'RULE-SET,loyalsoldier-telegramcidr,📦 TX 大流量,no-resolve' <<< "$c_content"; then
+        && ! grep -Fq 'RULE-SET,loyalsoldier-telegramcidr,📦 LA 大流量,no-resolve' <<< "$c_content"; then
         telegram_c_ok=0
       fi
       local client_direct_cidr
@@ -1875,9 +1875,9 @@ verify_subscription() {
       local tx_c tx_v2 cidr
       tx_c=$(curl -fsS --max-time 10 "https://${domain}/tx?${verification_query}" 2>/dev/null || true)
       tx_v2=$(curl -fsS --max-time 10 "https://${domain}/tx-v2?raw=1&${verification_query}" 2>/dev/null || true)
-      if grep -Fq 'name: "TX-TJ"' <<< "${tx_c}" && grep -Fq 'name: "TX-HY2"' <<< "${tx_c}" \
+      if grep -Fq 'name: "LA-TJ"' <<< "${tx_c}" && grep -Fq 'name: "LA-HY2"' <<< "${tx_c}" \
         && grep -Fq "server: ${TX_DIRECT_IP}" <<< "${tx_c}" \
-        && [[ "$(grep -c '#TX-' <<< "${tx_v2}" || true)" -eq 2 ]]; then
+        && [[ "$(grep -c '#LA-' <<< "${tx_v2}" || true)" -eq 2 ]]; then
         tx_ok=1
         while IFS= read -r cidr; do
           [[ -z "${cidr}" ]] && continue
@@ -2327,12 +2327,12 @@ export async function onRequest(context) {
   const ispOnlySelectProxyLines = [`      - "🛡️ ISP 出口自动"`, ...ispOnlyProxyNames.map((name) => `      - "${name}"`)].join('\n');
   const fallbackProxyLines = ispOnlySelectProxyLines;
   const telegramProxyLines = [
-    ...(telegramDirectEnabled ? [`      - "📦 TX 大流量"`] : []),
+    ...(telegramDirectEnabled ? [`      - "📦 LA 大流量"`] : []),
     `      - "🚀 节点选择"`,
     `      - "♻️ 自动选择"`,
     `      - "🛡️ 自动容灾"`,
   ].join('\n');
-  const telegramRuleTarget = telegramDirectEnabled ? "📦 TX 大流量" : "📲 电报信息";
+  const telegramRuleTarget = telegramDirectEnabled ? "📦 LA 大流量" : "📲 电报信息";
   const aiRuleLines = aiIspDomains
     .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},🤖 AI 服务'`)
     .join('\n');
@@ -2356,7 +2356,7 @@ export async function onRequest(context) {
     .map((domain) => `    - "${domain}"`)
     .join('\n');
   const txBulkRuleLines = txBulkDomains
-    .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},📦 TX 大流量'`)
+    .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},📦 LA 大流量'`)
     .join('\n');
   const clientDirectIpRuleLines = clientDirectIpCidrs
     .map((cidr) => `    - 'IP-CIDR,${cidr},DIRECT,no-resolve'`)
@@ -2543,7 +2543,7 @@ ${proxyGroupLines}
     interval: 300
     timeout: 3000
 
-  - name: "📦 TX 大流量"
+  - name: "📦 LA 大流量"
     type: fallback
     proxies:
 ${txProxyGroupLines}
@@ -2684,11 +2684,13 @@ CJS
   # 生成 Clash Verge 全局扩展脚本：任意机场仅作为 T 节点的前置中转。
   cat > "${pages_dir}/global-extension.js" <<'GLOBALJS'
 const FINAL_GROUP_NAME = "🛡️ ISP 最终出口";
-const TX_GROUP_NAME = "📦 TX 大流量";
+const TX_GROUP_NAME = "📦 LA 大流量";
+const LEGACY_TX_GROUP_NAME = "📦 TX 大流量";
 const TRANSIT_GROUP_NAME = "🛫 机场中转";
 const CUSTOM_GROUP_NAMES = new Set([
   FINAL_GROUP_NAME,
   TX_GROUP_NAME,
+  LEGACY_TX_GROUP_NAME,
   TRANSIT_GROUP_NAME,
 ]);
 
@@ -2813,14 +2815,16 @@ function rewriteAirportRules(rules, replaceableTargets) {
       const domain = parts[1].trim();
       const target = parts[parts.length - 1].trim();
       if (target === FINAL_GROUP_NAME && finalOverlayDomains.has(domain)) return [];
-      if (target === TX_GROUP_NAME && txOverlayDomains.has(domain)) return [];
+      if ((target === TX_GROUP_NAME || target === LEGACY_TX_GROUP_NAME) && txOverlayDomains.has(domain)) return [];
     }
 
     const lastPart = parts[parts.length - 1].trim();
     const hasNoResolve = lastPart === "no-resolve";
     const targetIndex = hasNoResolve ? parts.length - 2 : parts.length - 1;
     const target = parts[targetIndex].trim();
-    if (replaceableTargets.has(target)) {
+    if (target === LEGACY_TX_GROUP_NAME) {
+      parts[targetIndex] = TX_GROUP_NAME;
+    } else if (replaceableTargets.has(target)) {
       parts[targetIndex] = FINAL_GROUP_NAME;
     }
     return [parts.join(",")];
@@ -3121,7 +3125,7 @@ GLOBALJS
       shadowrocket_module: "/sr"
     }) + (if $tx_enabled then [{
       id: "tx",
-      name: "TX 直出",
+      name: "LA 直出",
       kind: "tx-direct",
       host: $tx_ip,
       expires: null,
