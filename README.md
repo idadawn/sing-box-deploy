@@ -317,6 +317,20 @@ Clash/Mihomo 的默认入口是 `🛡️ 自动容灾`：直连 `/c` 的交互�
 
 订阅 DNS 使用国内 DoH 解析节点域名，并通过 `🛡️ 自动容灾` 访问国外 DoH；`respect-rules: true` 保证 DNS 连接服从分流规则，同时避免节点域名解析形成启动环。
 
+### 酒店 / 公共 Wi-Fi 门户认证
+
+`/c`（含单 ISP）、`/tx` 和 `/s` 都由生成模板持久携带门户兼容策略，重新生成、发布并更新订阅后仍然保留：
+
+- Apple 的 `captive.apple.com`、Android 的 `connectivitycheck.gstatic.com` / `connectivitycheck.android.com`，以及 Windows 的 `www.msftconnecttest.com`、`ipv6.msftconnecttest.com`、`www.msftncsi.com`、`dns.msftncsi.com` 优先 `DIRECT`，位于通用规则和强制 TCP 规则之前。
+- 这些探测域名及 `.lan` / `.local` 不分配 Fake-IP，DNS 使用 `nameserver-policy: [system]`，让当前网络提供解析；`.lan` / `.local` 的连接也直连。其他域名继续使用原有 DNS 分流，不把整个 Apple、Google 或 Microsoft 域名放行。
+- `/s` 保留原 DNS 设置和 Fake-IP 过滤语义；白名单模式转换为带优先例外的规则模式，原通配名单保存在内联域名集合中。已有 `direct-nameserver` 也遵循域名解析策略，避免再次用公网 DNS 解析探测域名。
+
+客户端需使用**规则模式**，系统 DNS 应来自当前 Wi-Fi 的自动配置。`system` 不会替换手工设置的公共 DNS；这类客户端可在本机覆写中，将上述域名的 DNS 指向实际网卡的 DHCP DNS（例如 macOS Wi-Fi 为 `en0` 时使用 `dhcp://en0`）。订阅不固定网卡名、酒店网关 IP，也不切换 TUN 或系统代理。
+
+网关私网 IP 沿用 `CLIENT_DIRECT_IP_CIDRS` 的高优先级直连规则。酒店若使用额外的公网认证域名或 CAPPORT API，仍需为实际认证链补充直连和本地 DNS 例外；固定探测名单不保证所有酒店都会自动弹窗。验证时应在未认证网络上确认探测经过本地网络、能打开认证页，再完成登录。
+
+回归测试运行 `bash tests/run.sh`；指定 `MIHOMO_BIN=/path/to/mihomo` 可额外对生成的全量 / 单 ISP / TX 订阅及三种 Fake-IP 模式的扩展配置执行真实核心 `-t` 检查。可用 `MIHOMO_DATA_DIR` 提供已有公开地理库缓存；测试不加载真实订阅凭据或修改正在运行的客户端。
+
 ### 首页可见性
 
 首页读取部署时生成的 `subscriptions.json`。该文件包含编号、ISP IP、到期时间和订阅路径，便于识别实际出口；不会包含 ISP 账号或密码。由于 IP 会在前端公开，不能把“隐藏首页编号”视为访问控制。

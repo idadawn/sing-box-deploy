@@ -76,6 +76,7 @@ The optional portal tracks 100 GB per-account ISP quota within a shared 1000 GB 
 - Direct `/c` Clash profiles use HY2-first fallback for interactive traffic and Trojan-first fallback for TX/download traffic; latency-only URL tests must not select the default route.
 - Direct `/c` Clash profiles prefer `DIRECT` for Apple rules while keeping proxy choices available; the global extension retains its conservative Trojan-first injected groups.
 - Generated Clash DNS follows routing rules, resolves proxy node domains through the dedicated domestic resolvers, and sends foreign DoH through the interactive fallback group.
+- `/c`, `/tx`, and `/s` keep exact captive-portal probes and LAN names on local DNS with real IPs and priority DIRECT rules. Preserve unrelated DNS routing and inherited Fake-IP filter semantics; never hardcode a client's interface or hotel gateway in shared subscriptions.
 - `CLASH_FORCE_TCP_ENABLED` forces configured domains away from client UDP/443 without disabling the Hysteria2 transport itself.
 
 ## Key files
