@@ -118,10 +118,10 @@ export function renderPages(source, env) {
     for (const [key, value] of Object.entries(replacements)) code = code.replaceAll(key, value || '');
     if (/[A-Z][A-Z0-9_]*_PLACEHOLDER/.test(code)) throw new Error('Unresolved TX template placeholder');
     // IP is the entry address; domain SNI still provides normal TLS validation.
-    code = code.replaceAll("requestedIsp ? requestedIsp.toUpperCase() : 'ALL-ISPS'", "'LA'")
-      .replaceAll('entry.id.toUpperCase()', "'LA'")
+    code = code.replaceAll("requestedIsp ? requestedIsp.toUpperCase() : 'ALL-ISPS'", "'DIRECT'")
+      .replaceAll('entry.id.toUpperCase()', "'DIRECT'")
       .replaceAll('expire=${expire}', 'expire=0')
-      .replaceAll('🛡️ ISP 出口自动', '🛡️ LA 出口');
+      .replaceAll('🛡️ ISP 出口自动', '🛡️ 公共直出');
     return code + '\n';
   };
   return { 'tx.js': render('CJS'), 'tx-v2.js': render('V2JS') };

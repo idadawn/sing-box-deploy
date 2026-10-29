@@ -519,7 +519,7 @@
 <body>
   <main class="page">
     <header class="hero">
-      <div class="badge">T 中继 · ISP 出口 / LA 直出</div>
+      <div class="badge">T 中继 · ISP 出口 / 公共直出</div>
       <h1>多出口订阅入口</h1>
       <p class="subtitle">从左侧选择一个出口节点，右侧会显示该节点专属的 v2ray、Clash 与 Shadowrocket 入口。每个节点订阅只包含对应出口的 Trojan 和 Hysteria2 节点。</p>
     </header>
@@ -533,7 +533,7 @@
         <div id="nodeList" class="node-list" role="listbox" aria-label="可用出口节点">
           <p class="loading">正在加载节点列表…</p>
         </div>
-        <p class="sidebar-note">ISP 节点到期后会自动从列表移除。LA 直出使用独立订阅，不受 ISP 到期影响。</p>
+        <p class="sidebar-note">ISP 节点到期后会自动从列表移除。公共直出使用独立订阅，不受 ISP 到期影响。</p>
       </aside>
 
       <section class="details" aria-live="polite">
@@ -628,7 +628,7 @@
       </section>
     </section>
 
-    <footer class="footer">Powered by Cloudflare Pages · ISP 出口 / LA 直出</footer>
+    <footer class="footer">Powered by Cloudflare Pages · ISP 出口 / 公共直出</footer>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite">订阅地址已复制</div>
@@ -682,8 +682,8 @@
       elements.host.textContent = entry.host || 'IP 未提供';
       elements.expiry.textContent = expiryText(entry);
       elements.policy.textContent = entry.kind === 'tx-direct'
-        ? 'LA 直出：公网流量使用 LA 机器 IP。Clash 订阅保留内网优先直连规则，包括 192.129.0.0/16 和 192.132.0.0/16。'
-        : 'ISP 固定出口：AI 与普通流量使用当前选择的 ISP，指定视频等大流量按既有规则从 LA 直出。';
+        ? '公共直出：公网流量使用 当前服务器公网 IP。Clash 订阅保留内网优先直连规则，包括 192.129.0.0/16 和 192.132.0.0/16。'
+        : 'ISP 固定出口：AI 与普通流量使用当前选择的 ISP，指定视频等大流量按既有规则从 公共直出。';
       elements.v2Url.value = v2Url;
       elements.clashUrl.value = clashUrl;
       elements.shadowrocketUrl.value = shadowrocketUrl;

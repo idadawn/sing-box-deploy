@@ -9,7 +9,7 @@
 ## 设计目标
 
 - 一个 ISP 编号对应一个固定出口，不在不同 ISP 之间自动切换。
-- PayPal 的 `paypal.com`、`paypalobjects.com`、`paypal.me`、`paypal.cn`、`paypal.com.cn` 及子域名在 ISP 订阅中优先走 ISP 专用组，其 DNS 也经该组查询；服务端优先固定到入站对应 ISP，覆盖大流量直出规则。独立 `/tx` 订阅仍只有 LA 公网出口。
+- PayPal 的 `paypal.com`、`paypalobjects.com`、`paypal.me`、`paypal.cn`、`paypal.com.cn` 及子域名在 ISP 订阅中优先走 ISP 专用组，其 DNS 也经该组查询；服务端优先固定到入站对应 ISP，覆盖大流量直出规则。独立 `/tx` 订阅仍只有 公共直出。
 - 同时提供 Trojan/TCP 与 Hysteria2/UDP，覆盖不同网络条件。
 - 默认失败关闭：未命中明确规则的服务端流量由 `route.final=block` 拒绝。
 - ISP 地址、账号和密码只保存在服务器本地私有 TSV 文件中。
@@ -51,7 +51,7 @@ AI 与普通流量          指定的大流量域名
 - `<大写编号>-TJ`，例如 `DAWN-TJ`
 - `<大写编号>-HY2`，例如 `DAWN-HY2`
 
-两个节点只代表不同的接入协议，服务端最终出口相同。保留编号，统一大写展示并移除 `T-` 前缀；后台 ID、URL 参数、端口、凭据和出口映射不改。独立直出节点为 `LA-TJ`、`LA-HY2`，大流量策略组显示为 `📦 LA 大流量`。这是展示名调整：内部 `tx` 标识、`/tx` 和 `/tx-v2` 订阅路径、令牌、端口和线路映射保持不变，已有订阅更新即可。现有客户端在新版本发布并更新订阅后可能需要重新选择节点。
+两个节点只代表不同的接入协议，服务端最终出口相同。保留编号，统一大写展示并移除 `T-` 前缀；后台 ID、URL 参数、端口、凭据和出口映射不改。独立直出节点为 `DIRECT-TJ`、`DIRECT-HY2`，大流量策略组显示为 `📦 大流量直出`。名称描述的是绕过独立 ISP、使用当前服务器公网出口的用途，不绑定机房、地区或 SSH 主机别名；后续迁移无需改名。这是展示名调整：内部 `tx` 标识、`/tx` 和 `/tx-v2` 订阅路径、令牌、端口和线路映射保持不变，已有订阅更新即可。现有客户端在新版本发布并更新订阅后可能需要重新选择节点。
 
 ## 自由翱翔：个人办公与流量额度
 
@@ -168,9 +168,9 @@ sudo ./install.sh --pages-only
 
 先在目标服务器部署所选 ISP，分别验证 Trojan/TCP、Hysteria2/UDP、TLS 证书及实际出口 IP，然后发布覆盖配置。核验正式订阅后再迁移其他编号。回退时删除对应覆盖项并重新发布；旧入口应保留到客户端完成订阅更新。此选项不负责复制服务端配置或证书，目标服务器仍必须满足其部署方式要求。
 
-### 独立 LA 公网出口订阅
+### 独立 公共直出订阅
 
-需要单独使用 LA 的公网 IP 时，设置 `.env` 中的 `TX_DIRECT_ENABLED=true`、
+需要单独使用 当前服务器的公网 IP 时，设置 `.env` 中的 `TX_DIRECT_ENABLED=true`、
 `TX_DIRECT_IP` 和三个 `TX_DIRECT_*PASSWORD`，然后执行：
 
 ```bash
@@ -181,7 +181,7 @@ sudo ./install.sh --pages-only
 
 新服务 `sing-box-tx-direct` 使用独立的 Trojan TCP 443 和 Hysteria2 UDP 8443
 （可配置，须在云安全组放行），不会重启或改写原 `sing-box` 服务。
-普通互联网及 AI 流量均使用 LA 公网出口；不会加入原有 ISP 订阅或容灾组。
+普通互联网及 AI 流量均使用 公共直出；不会加入原有 ISP 订阅或容灾组。
 历史 TX 独立服务曾使用 TCP 14687 / UDP 19623；现有 GW 公共直出使用 LA 的 TCP 23105 / UDP 24105，沿用独立凭据与内部 `tx` 标识。
 允许复用过期条目的空闲端口；若旧 ISP 续费后与 TX 端口重叠，校验会拒绝部署，须先调整 TX 端口。
 节点通过 IP 连接，保留原域名 SNI 验证 TLS 证书，不关闭证书验证。
@@ -189,7 +189,7 @@ sudo ./install.sh --pages-only
 - Clash/Mihomo：`https://<SUB_DOMAIN>/tx`
 - v2rayN / Shadowrocket 节点：`https://<SUB_DOMAIN>/tx-v2`
 
-订阅不受 `ds-1` 等 ISP 到期日期影响，节点显示为 `LA-TJ` 和 `LA-HY2`。
+订阅不受 `ds-1` 等 ISP 到期日期影响，节点显示为 `DIRECT-TJ` 和 `DIRECT-HY2`。
 Clash 继续从 `CLIENT_DIRECT_IP_CIDRS_FILE` 下发内网优先直连规则，包括
 `192.129.0.0/16`、`192.132.0.0/16`；访问内网依赖客户端原有局域网或公司 VPN 路由。
 服务端还会拒绝内网及云元数据目标，防止把公共直出代理当作服务器内网入口。
@@ -313,7 +313,7 @@ Content-Disposition: attachment; filename=<编号>
 
 响应同时提供 RFC 5987 的 `filename*`；文件名不添加引号和 `.yaml` 后缀，以兼容采用不同响应头解析方式的客户端。
 
-Clash/Mihomo 的默认入口是 `🛡️ 自动容灾`：直连 `/c` 的交互、ISP 和 AI 故障转移组优先 `<大写编号>-HY2`，`📦 LA 大流量` 组优先 `<大写编号>-TJ`；失败时切换同订阅内另一协议。`♻️ 自动选择` 保留名称以兼容客户端历史选择。全局扩展脚本仍采用 Trojan 优先的注入顺序。
+Clash/Mihomo 的默认入口是 `🛡️ 自动容灾`：直连 `/c` 的交互、ISP 和 AI 故障转移组优先 `<大写编号>-HY2`，`📦 大流量直出` 组优先 `<大写编号>-TJ`；失败时切换同订阅内另一协议。`♻️ 自动选择` 保留名称以兼容客户端历史选择。全局扩展脚本仍采用 Trojan 优先的注入顺序。
 
 订阅 DNS 使用国内 DoH 解析节点域名，并通过 `🛡️ 自动容灾` 访问国外 DoH；`respect-rules: true` 保证 DNS 连接服从分流规则，同时避免节点域名解析形成启动环。
 
@@ -478,7 +478,7 @@ ufw status numbered
 
 ### GitHub、Google 或 X 首包慢、下载卡住
 
-先在 Clash/Mihomo 中把 `🚀 节点选择` 固定为 `🛡️ 自动容灾`。直连 `/c` 订阅的交互故障转移组优先 Hysteria2，`LA 大流量` 组则优先 Trojan；如果当前网络限制 UDP，可手动固定 `<大写编号>-TJ`。默认订阅会阻止这些站点使用 UDP/443，从而避免浏览器等待 HTTP/3 超时后才回落。
+先在 Clash/Mihomo 中把 `🚀 节点选择` 固定为 `🛡️ 自动容灾`。直连 `/c` 订阅的交互故障转移组优先 Hysteria2，`大流量直出` 组则优先 Trojan；如果当前网络限制 UDP，可手动固定 `<大写编号>-TJ`。默认订阅会阻止这些站点使用 UDP/443，从而避免浏览器等待 HTTP/3 超时后才回落。
 
 如果 Trojan 明显正常而 Hysteria2 仍然慢，检查客户端到 T 的 RTT、丢包和 UDP 限速。Clash Verge Rev 的 gVisor TUN 若使用默认 MTU 9000，可在本机合并配置中依次测试 `1400`、`1380`；选择稳定工作的最高值，不要直接修改服务器物理网卡 MTU。
 
