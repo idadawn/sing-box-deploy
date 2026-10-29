@@ -2267,6 +2267,17 @@ export async function onRequest(context) {
     .filter(Boolean);
   const aiIspDomains = decodeDomainList("AI_ISP_DOMAINS_BASE64_PLACEHOLDER");
   const paypalIspDomains = PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER;
+  // Exact connectivity probes only: never bypass all Apple/Google/Microsoft traffic.
+  const captivePortalDomains = [
+    "captive.apple.com",
+    "connectivitycheck.gstatic.com",
+    "connectivitycheck.android.com",
+    "www.msftconnecttest.com",
+    "ipv6.msftconnecttest.com",
+    "www.msftncsi.com",
+    "dns.msftncsi.com",
+  ];
+  const captiveDnsDomains = [...captivePortalDomains, "+.lan", "+.local"];
   const txBulkDomains = DIRECT_BULK_ENABLED_PLACEHOLDER
     ? decodeDomainList("DIRECT_BULK_DOMAINS_BASE64_PLACEHOLDER")
     : [];
@@ -2333,6 +2344,17 @@ export async function onRequest(context) {
       - "https://1.1.1.1/dns-query#🛡️ ISP 出口自动"
       - "https://8.8.8.8/dns-query#🛡️ ISP 出口自动"`)
     .join('\n');
+  const captiveRuleLines = [
+    ...captivePortalDomains.map((domain) => `    - 'DOMAIN,${domain},DIRECT'`),
+    "    - 'DOMAIN-SUFFIX,lan,DIRECT'",
+    "    - 'DOMAIN-SUFFIX,local,DIRECT'",
+  ].join('\n');
+  const captiveDnsPolicyLines = captiveDnsDomains
+    .map((domain) => `    "${domain}": [system]`)
+    .join('\n');
+  const captiveFakeIpFilterLines = captivePortalDomains
+    .map((domain) => `    - "${domain}"`)
+    .join('\n');
   const txBulkRuleLines = txBulkDomains
     .map((domain) => `    - 'DOMAIN-SUFFIX,${domain},📦 TX 大流量'`)
     .join('\n');
@@ -2386,8 +2408,11 @@ dns:
   use-hosts: true
   use-system-hosts: true
   respect-rules: true
+  direct-nameserver-follow-policy: true
   fake-ip-range: 198.18.0.1/16
+  fake-ip-filter-mode: blacklist
   fake-ip-filter:
+${captiveFakeIpFilterLines}
     - "+.lan"
     - "+.local"
     - "+.market.xiaomi.com"
@@ -2408,6 +2433,8 @@ dns:
     - "https://1.1.1.1/dns-query#🛡️ 自动容灾"
     - "https://8.8.8.8/dns-query#🛡️ 自动容灾"
   nameserver-policy:
+    # Use this network's DNS for portal discovery, before public DNS policies.
+${captiveDnsPolicyLines}
 ${paypalDnsPolicyLines}
     "geosite:cn,private":
       - "https://doh.pub/dns-query#DIRECT"
@@ -2589,6 +2616,7 @@ ${ispOnlySelectProxyLines}
 ${fallbackProxyLines}
 
 rules:
+${captiveRuleLines}
 ${clientDirectIpRuleLines}
 ${forceTcpRuleLines}
 ${paypalRuleLines}
@@ -2669,6 +2697,21 @@ const PAYPAL_ISP_DOMAINS = PAYPAL_ISP_DOMAINS_JSON_PLACEHOLDER;
 const TX_BULK_DOMAINS = DIRECT_BULK_DOMAINS_JSON_PLACEHOLDER;
 const DIRECT_BULK_APPS = DIRECT_BULK_APPS_JSON_PLACEHOLDER;
 const CLIENT_DIRECT_IP_CIDRS = CLIENT_DIRECT_IP_CIDRS_JSON_PLACEHOLDER;
+const CAPTIVE_PORTAL_DOMAINS = [
+  "captive.apple.com",
+  "connectivitycheck.gstatic.com",
+  "connectivitycheck.android.com",
+  "www.msftconnecttest.com",
+  "ipv6.msftconnecttest.com",
+  "www.msftncsi.com",
+  "dns.msftncsi.com",
+];
+const CAPTIVE_DNS_DOMAINS = [...CAPTIVE_PORTAL_DOMAINS, "+.lan", "+.local"];
+const CAPTIVE_RULES = [
+  ...CAPTIVE_PORTAL_DOMAINS.map((domain) => `DOMAIN,${domain},DIRECT`),
+  "DOMAIN-SUFFIX,lan,DIRECT",
+  "DOMAIN-SUFFIX,local,DIRECT",
+];
 const FORCE_TCP_DOMAINS = CLASH_FORCE_TCP_DOMAINS_JSON_PLACEHOLDER;
 const FORCE_TCP_ENABLED = CLASH_FORCE_TCP_ENABLED_PLACEHOLDER;
 const HYSTERIA_USE_BBR = HYSTERIA_USE_BBR_PLACEHOLDER;
@@ -2784,6 +2827,50 @@ function rewriteAirportRules(rules, replaceableTargets) {
   });
 }
 
+function captiveFakeIpFilter(dns, providers) {
+  const filter = Array.isArray(dns["fake-ip-filter"]) ? dns["fake-ip-filter"] : [];
+  const mode = dns["fake-ip-filter-mode"] || "blacklist";
+  if (mode === "blacklist") {
+    return {
+      "fake-ip-filter-mode": mode,
+      "fake-ip-filter": [...new Set([...CAPTIVE_DNS_DOMAINS, ...filter])],
+    };
+  }
+
+  const exceptions = [
+    ...CAPTIVE_PORTAL_DOMAINS.map((domain) => `DOMAIN,${domain},real-ip`),
+    "DOMAIN-SUFFIX,lan,real-ip",
+    "DOMAIN-SUFFIX,local,real-ip",
+  ];
+  let inheritedRules = filter;
+  if (mode === "whitelist") {
+    // A whitelist means "return fake IP". Preserve its wildcard semantics in a
+    // domain provider, then put real-IP exceptions ahead of it in rule mode.
+    const patterns = [];
+    inheritedRules = [];
+    for (const entry of filter) {
+      const match = /^(geosite|rule-set):(.+)$/i.exec(entry);
+      if (match) {
+        inheritedRules.push(...match[2].split(",").map(
+          (name) => `${match[1].toUpperCase()},${name},fake-ip`,
+        ));
+      } else {
+        patterns.push(entry);
+      }
+    }
+    if (patterns.length > 0) {
+      const name = "captive-portal-original-fakeip-whitelist";
+      providers[name] = { type: "inline", behavior: "domain", payload: patterns };
+      inheritedRules.push(`RULE-SET,${name},fake-ip`);
+    }
+    inheritedRules.push("MATCH,real-ip");
+  }
+  return {
+    "fake-ip-filter-mode": "rule",
+    "fake-ip-filter": [...new Set([...exceptions, ...inheritedRules])],
+  };
+}
+
 function main(config) {
   config = config || {};
   const sourceProxies = Array.isArray(config.proxies) ? config.proxies : [];
@@ -2796,6 +2883,9 @@ function main(config) {
     ? sourceDns["nameserver-policy"]
     : {};
   const sourceTun = config.tun && typeof config.tun === "object" ? config.tun : {};
+  const captiveDnsPolicy = Object.fromEntries(CAPTIVE_DNS_DOMAINS.map(
+    (domain) => [domain, ["system"]],
+  ));
 
   const airportProxies = sourceProxies.filter(
     (proxy) => proxy && proxy.name && !injectedNodeNames.has(proxy.name),
@@ -2854,13 +2944,20 @@ function main(config) {
   };
   config.dns = {
     ...sourceDns,
+    ...captiveFakeIpFilter(sourceDns, config["rule-providers"]),
     "respect-rules": true,
+    // An inherited direct-nameserver must not bypass the portal DNS policy.
+    "direct-nameserver-follow-policy": true,
     "proxy-server-nameserver": Array.isArray(sourceDns["proxy-server-nameserver"])
       && sourceDns["proxy-server-nameserver"].length > 0
       ? sourceDns["proxy-server-nameserver"]
       : ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"],
     "nameserver-policy": {
-      ...sourceDnsPolicy,
+      // Order matters when the airport has a broad rule-set/geosite policy.
+      ...captiveDnsPolicy,
+      ...Object.fromEntries(Object.entries(sourceDnsPolicy).filter(
+        ([domain]) => !Object.prototype.hasOwnProperty.call(captiveDnsPolicy, domain),
+      )),
       ...Object.fromEntries(PAYPAL_ISP_DOMAINS.map((domain) => [`+.${domain}`, [
         `https://1.1.1.1/dns-query#${FINAL_GROUP_NAME}`,
         `https://8.8.8.8/dns-query#${FINAL_GROUP_NAME}`,
@@ -2882,6 +2979,7 @@ function main(config) {
 
   const airportRules = rewriteAirportRules(config.rules, replaceableTargets);
   config.rules = [
+    ...CAPTIVE_RULES,
     ...CLIENT_DIRECT_IP_CIDRS.map((cidr) => `IP-CIDR,${cidr},DIRECT,no-resolve`),
     ...(FORCE_TCP_ENABLED
       ? FORCE_TCP_DOMAINS.map(
@@ -2900,7 +2998,7 @@ function main(config) {
     `RULE-SET,loyalsoldier-telegramcidr,${TELEGRAM_DIRECT_ENABLED ? TX_GROUP_NAME : FINAL_GROUP_NAME},no-resolve`,
     `RULE-SET,loyalsoldier-proxy,${FINAL_GROUP_NAME}`,
     "RULE-SET,loyalsoldier-direct,DIRECT",
-    ...airportRules,
+    ...airportRules.filter((rule) => !CAPTIVE_RULES.includes(rule)),
     "RULE-SET,loyalsoldier-lancidr,DIRECT,no-resolve",
     "RULE-SET,loyalsoldier-cncidr,DIRECT,no-resolve",
     "GEOIP,LAN,DIRECT",

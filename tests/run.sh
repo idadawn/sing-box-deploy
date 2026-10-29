@@ -157,6 +157,7 @@ render_js_template() {
     -e 's/HYSTERIA_USE_BBR_PLACEHOLDER/true/g' \
     -e 's/HYSTERIA_UP_PLACEHOLDER/100/g' \
     -e 's/HYSTERIA_DOWN_PLACEHOLDER/100/g' \
+    -e 's|CLASH_RULESET_BASE_URL_PLACEHOLDER|https://rules.example.test|g' \
     -e 's/[A-Z][A-Z0-9_]*_PLACEHOLDER/test/g' \
     "${source}" > "${destination}"
 }
@@ -184,6 +185,7 @@ if command -v node >/dev/null 2>&1; then
   node "${ROOT_DIR}/tests/non-expiring.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/ingress-overrides.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/auth.mjs" "${TMP_DIR}/v2.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
+  node "${ROOT_DIR}/tests/captive-portal.mjs" "${TMP_DIR}/c.mjs" "${TMP_DIR}/global.mjs"
   node "${ROOT_DIR}/tests/usage.mjs"
   node "${ROOT_DIR}/tests/retired.mjs"
   node "${ROOT_DIR}/tests/isp-credentials.mjs"
