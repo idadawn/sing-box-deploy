@@ -39,10 +39,10 @@ const uri = await importCode(modules['tx-v2.js']);
 const response = await clash.onRequest({ request: new Request('https://sub.example/tx') });
 const yaml = await response.text();
 assert.equal(response.status, 200);
-assert.match(yaml, /name: "LA-TJ"/);
-assert.match(yaml, /name: "LA-HY2"/);
-assert.doesNotMatch(yaml, /TX-TJ|TX-HY2|TX 大流量|TX 出口/);
-assert.equal(response.headers.get('Profile-Title'), 'LA');
+assert.match(yaml, /name: "DIRECT-TJ"/);
+assert.match(yaml, /name: "DIRECT-HY2"/);
+assert.doesNotMatch(yaml, /TX-TJ|TX-HY2|TX 大流量|TX 出口|LA-TJ|LA-HY2|LA 大流量|LA 出口/);
+assert.equal(response.headers.get('Profile-Title'), 'DIRECT');
 assert.match(response.headers.get('Subscription-Userinfo'), /expire=0$/);
 assert.equal((yaml.match(/type: (trojan|hysteria2)\n/g) || []).length, 2);
 assert.equal((yaml.match(/server: 203\.0\.113\.50\n/g) || []).length, 2);
@@ -64,9 +64,9 @@ for (const cidr of cidrs) {
 const rawResponse = await uri.onRequest({ request: new Request('https://sub.example/tx-v2?raw=1') });
 const raw = await rawResponse.text();
 assert.equal(raw.trim().split('\n').length, 2);
-assert.match(raw, /#LA-TJ$/m);
-assert.match(raw, /#LA-HY2$/m);
-assert.equal(rawResponse.headers.get('Profile-Title'), 'LA');
+assert.match(raw, /#DIRECT-TJ$/m);
+assert.match(raw, /#DIRECT-HY2$/m);
+assert.equal(rawResponse.headers.get('Profile-Title'), 'DIRECT');
 // The legacy tx route and authorization scope are stable despite the new label.
 assert.equal((await clash.onRequest({ request: new Request('https://sub.example/tx?isp=tx'), data: { allowedIsps: ['tx'] } })).status, 200);
 assert.equal((await clash.onRequest({ request: new Request('https://sub.example/tx'), data: { allowedIsps: ['la'] } })).status, 410);
