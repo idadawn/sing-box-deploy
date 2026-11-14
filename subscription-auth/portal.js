@@ -7,9 +7,13 @@ const formatTraffic = bytes => {
 };
 const localDate = seconds => seconds ? new Date(seconds * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '待同步';
 let invite = new URLSearchParams(location.hash.slice(1)).get('invite');
+let currentUser = null, sessionRevision = 0;
 if (invite) history.replaceState(null, '', location.pathname); // Never send invitation in Referer/query logs.
 function message(text = '', failed = false) { $('message').textContent = text; $('message').className = failed ? 'error' : ''; }
-function view(name) { for (const id of ['loginView', 'activateView', 'accountView']) $(id).hidden = id !== name; }
+function view(name) {
+  for (const id of ['loginView', 'activateView', 'accountView', 'adminView']) $(id).hidden = id !== name;
+  $('pageBadge').textContent = name === 'adminView' ? '管理后台' : '个人空间';
+}
 async function api(path, data) {
   const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...(data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}) });
   const body = await response.json();
@@ -94,17 +98,42 @@ function usageSummary(usage, direct) {
   }
   return box;
 }
+function compactUsage(usage, shared) {
+  const box = document.createElement('div'), label = document.createElement('p'), value = document.createElement('p'), note = document.createElement('p');
+  box.className = 'usage-summary'; label.className = 'hint'; value.className = 'usage-value'; note.className = 'usage-status';
+  label.textContent = shared ? '大家合计已用' : '我已用';
+  value.textContent = formatTraffic(usage?.used_bytes) + (shared ? ' / ' + formatTraffic(usage?.quota_bytes) : '');
+  if (shared) {
+    note.textContent = usage?.remaining_bytes == null ? '公共剩余额度待同步' : '公共剩余 ' + formatTraffic(usage.remaining_bytes);
+    if (usage?.status === 'stale') note.textContent += ' · 待同步';
+  } else {
+    note.textContent = usage?.status === 'partial' ? '接入后统计' : usage?.status === 'stale' ? '待同步' : usage?.used_bytes == null ? '等待用量数据' : 'ISP + 公共直出';
+    if (usage?.status === 'partial') note.title = '历史未补齐；统计起点：' + localDate(usage.started_at) + '（北京时间）';
+  }
+  box.append(label, value, note); return box;
+}
+function clearAdmin() {
+  for (const id of ['accountOverview', 'adminAccountDetail', 'adminSharedUsage']) $(id).replaceChildren();
+  $('adminAccountDetail').hidden = true;
+  const all = document.createElement('option'); all.value = ''; all.textContent = '全部账号'; $('adminAccount').replaceChildren(all);
+}
+function clearSession() {
+  sessionRevision++; currentUser = null; clearAdmin();
+  for (const id of ['entries', 'personalUsage', 'sharedUsage']) $(id).replaceChildren();
+  $('adminLink').hidden = true;
+  history.replaceState(null, '', location.pathname + location.search); view('loginView');
+}
 function accountOverview(overview) {
   const box = $('accountOverview'); box.replaceChildren(); box.hidden = !overview;
   if (!overview) return;
   const heading = document.createElement('h2'); heading.textContent = '各账号总流量 · ISP + 公共直出'; box.append(heading);
   const table = document.createElement('table'), head = document.createElement('thead'), header = document.createElement('tr'), body = document.createElement('tbody');
-  for (const text of ['账号', '上传', '下载', '合计', '统计状态']) { const th = document.createElement('th'); th.textContent = text; header.append(th); }
+  for (const text of ['账号', '上传', '下载', '合计', '统计状态', '最近同步']) { const th = document.createElement('th'); th.textContent = text; header.append(th); }
   head.append(header); table.append(head, body);
   for (const { username, usage } of overview.accounts) {
     const row = document.createElement('tr');
     for (const text of [username.toUpperCase(), formatTraffic(usage.upload_bytes), formatTraffic(usage.download_bytes), formatTraffic(usage.used_bytes),
-      usage.status === 'current' ? '本账期' : usage.status === 'partial' ? '历史未补齐' : usage.status === 'stale' ? '待同步' : '待接入']) {
+      usage.status === 'current' ? '本账期' : usage.status === 'partial' ? '历史未补齐' : usage.status === 'stale' ? '待同步' : '待接入', localDate(usage.observed_at)]) {
       const td = document.createElement('td'); td.textContent = text; row.append(td);
     }
     body.append(row);
@@ -116,13 +145,41 @@ function accountOverview(overview) {
   note.textContent = '个人统计上传＋下载业务流量，每笔只计一次。KiwiVM 整机账单还包含两段转发、协议及系统流量；历史未归属部分不分摊到个人。';
   box.append(legacy, note);
 }
+async function loadAdmin() {
+  if (!currentUser?.is_admin) throw new Error('仅管理员可查询账号流量');
+  const selected = $('adminAccount').value, revision = sessionRevision, username = currentUser.username;
+  try {
+    const data = await api('/api/admin/usage' + (selected ? '?account=' + encodeURIComponent(selected) : ''));
+    if (revision !== sessionRevision || currentUser?.username !== username || location.hash !== '#admin') return;
+    const options = ['', ...data.account_names].map(name => {
+      const option = document.createElement('option'); option.value = name; option.textContent = name ? name.toUpperCase() : '全部账号'; return option;
+    });
+    $('adminAccount').replaceChildren(...options); $('adminAccount').value = selected;
+    accountOverview(data);
+    $('adminSharedUsage').replaceChildren(usageSummary(data.shared, true));
+    $('adminAccountDetail').hidden = !selected;
+    $('adminAccountDetail').replaceChildren(...(selected && data.accounts[0] ? [usageSummary(data.accounts[0].usage, false)] : []));
+    view('adminView');
+  } catch (error) {
+    if (error.status === 401) clearSession();
+    else if (error.status === 403) {
+      clearAdmin(); if (currentUser) currentUser.is_admin = false; $('adminLink').hidden = true;
+      history.replaceState(null, '', location.pathname + location.search); view('accountView');
+    }
+    throw error;
+  }
+}
 async function load() {
+  const revision = sessionRevision;
   const data = await api('/api/me');
+  if (revision !== sessionRevision) return;
+  if (!data.is_admin || currentUser?.username !== data.username) clearAdmin();
+  currentUser = { username: data.username, is_admin: data.is_admin };
   $('accountName').textContent = data.username.toUpperCase();
   $('linesHeading').textContent = data.is_admin ? '全部线路' : '我的线路';
-  $('personalUsage').hidden = !data.usage?.account_mode;
-  $('personalUsage').replaceChildren(...(data.usage?.account_mode ? [usageSummary(data.usage.personal, false)] : []));
-  accountOverview(data.overview);
+  $('adminLink').hidden = !data.is_admin || !data.usage?.account_mode;
+  $('personalUsage').replaceChildren(compactUsage(data.usage?.personal, false));
+  $('sharedUsage').replaceChildren(compactUsage(data.usage?.shared, true));
   $('entries').replaceChildren(...data.entries.map(entry => {
     const card = document.createElement('article'); card.className = 'panel';
     const head = document.createElement('div'), title = document.createElement('h2'), expiry = document.createElement('span'), address = document.createElement('p');
@@ -131,7 +188,6 @@ async function load() {
     expiry.textContent = direct ? '视频 · 下载' : '个人 ISP';
     address.className = 'address'; address.textContent = entry.host || '';
     head.append(title, expiry); card.append(head);
-    if (direct || !data.usage?.account_mode) card.append(usageSummary(entry.usage || (direct ? data.usage?.shared : data.usage?.personal), direct));
     if (data.usage?.account_mode) { const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = '使用此节点的流量统一计入你的个人总量。'; card.append(hint); }
     card.append(importActions(entry));
     const links = document.createElement('details'), summary = document.createElement('summary');
@@ -148,14 +204,12 @@ async function load() {
     card.append(links);
     return card;
   }));
-  const over = [data.usage?.personal?.over_quota ? '个人流量' : null, data.usage?.shared?.over_quota ? '公共流量' : null].filter(Boolean);
-  $('quotaAlert').hidden = !over.length;
-  $('quotaAlert').textContent = over.length ? over.join('、') + '已超额。个人额度仅提醒；公共套餐耗尽可能由供应商暂停服务。' : '';
-  $('billingCycle').textContent = data.usage?.account_mode
-    ? '个人与公共套餐按 KiwiVM 账期统计。请更新客户端订阅启用个人凭据；个人 100 GB 为提醒额度，整机可用量以 KiwiVM 为准。'
-    : data.usage?.shared?.source === 'kiwivm'
-    ? '公共套餐用量、额度与重置时间以 KiwiVM 为准；个人 ISP 仍按每月 1 日 00:00 UTC 统计。'
-    : '每月 1 日 00:00 UTC 重置 · 个人用量包含在整机公共额度内';
+  $('quotaAlert').hidden = !data.usage?.shared?.over_quota;
+  $('quotaAlert').textContent = data.usage?.shared?.over_quota ? '公共套餐流量已用尽，供应商可能暂停服务。' : '';
+  $('billingCycle').textContent = data.usage?.shared?.source === 'kiwivm'
+    ? '公共套餐全员共用，用量与账期以 KiwiVM 为准。' : '公共额度全员共用。';
+  if (location.hash === '#admin' && data.is_admin && data.usage?.account_mode) { await loadAdmin(); return; }
+  if (location.hash === '#admin') { history.replaceState(null, '', location.pathname + location.search); message('没有流量后台访问权限', true); }
   view('accountView');
 }
 async function action(button, task) {
@@ -170,13 +224,17 @@ for (const id of ['loginForm', 'activateForm', 'passwordForm']) {
         if (data.password !== data.confirmation) throw new Error('两次输入的密码不一致');
         await api('/api/activate', { password: data.password, invite }); invite = null;
       } else if (id === 'loginForm') await api('/api/login', data);
-      else { await api('/api/password', data); form.reset(); view('loginView'); message('密码已修改，请重新登录。'); return; }
+      else { await api('/api/password', data); form.reset(); clearSession(); message('密码已修改，请重新登录。'); return; }
       form.reset(); await load(); window.scrollTo({ top: 0 });
     });
   });
 }
-$('logout').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/logout', {}); $('entries').replaceChildren(); view('loginView'); }));
+$('logout').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/logout', {}); clearSession(); }));
 $('refreshUsage').addEventListener('click', event => action(event.currentTarget, load));
+$('refreshAdmin').addEventListener('click', event => action(event.currentTarget, loadAdmin));
+$('adminAccount').addEventListener('change', event => action(event.currentTarget, loadAdmin));
+$('backToAccount').addEventListener('click', () => { location.hash = ''; });
+window.addEventListener('hashchange', () => { message(); load().catch(error => { if (error.status === 401) clearSession(); else message(error.message, true); }); });
 $('rotate').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/rotate-token', {}); await load(); message('链接已重置。请在所有客户端中替换订阅链接。'); }));
 if (invite) view('activateView');
-else load().catch(error => { view('loginView'); if (error.status !== 401) message(error.message, true); });
+else load().catch(error => { if (error.status === 401) clearSession(); else { view('loginView'); message(error.message, true); } });

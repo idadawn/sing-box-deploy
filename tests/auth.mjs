@@ -64,7 +64,7 @@ async function login(username, value = password) {
   assert.match(response.headers.get('Set-Cookie'), /__Host-sub-session=.*; Path=\/; HttpOnly; Secure; SameSite=Strict/);
   return response.headers.get('Set-Cookie').split(';')[0];
 }
-for (const path of ['/v2', '/c', '/s', '/global-extension.js', '/tx', '/tx-v2', '/subscriptions.json', '/api/me']) {
+for (const path of ['/v2', '/c', '/s', '/global-extension.js', '/tx', '/tx-v2', '/subscriptions.json', '/api/me', '/api/admin/usage']) {
   const response = await request(path);
   assert.equal(response.status, 401, path); assert.match(response.headers.get('Cache-Control'), /no-store/);
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), null);
@@ -81,6 +81,7 @@ assert.equal((await request('/api/login', { body: { username: 'alice', password:
 let aliceCookie = await login('alice'), bobCookie = await login('bob');
 let alice = await (await request('/api/me', { cookie: aliceCookie })).json();
 const bob = await (await request('/api/me', { cookie: bobCookie })).json();
+assert.equal((await request('/api/admin/usage', { cookie: aliceCookie })).status, 403);
 assert.deepEqual(alice.entries.map(e => e.id), ['demo', 'tx']);
 assert.deepEqual(bob.entries.map(e => e.id), ['backup', 'tx']);
 assert.ok(!JSON.stringify(alice).includes('192.0.2.2'));

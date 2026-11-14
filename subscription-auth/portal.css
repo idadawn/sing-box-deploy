@@ -27,6 +27,14 @@
 .usage-summary p.usage-status { margin: 5px 0 0; line-height: 1.5; }
 .account-total, .account-overview { margin-bottom: 24px; }
 .account-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.admin-link { display: inline-flex; align-items: center; padding: 10px 15px; border: 1px solid var(--line); border-radius: 9px; color: var(--accent); text-decoration: none; font-size: 14px; }
+.admin-link:hover { background: #253751; }
+.home-usage { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px; }
+.home-usage .usage-summary, #adminSharedUsage .usage-summary { margin-top: 0; }
+.home-usage .panel { padding: 20px; }
+.admin-controls { display: flex; margin-bottom: 20px; }
+.admin-controls label { display: grid; gap: 6px; color: var(--muted); width: min(100%, 320px); }
+.admin-controls select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .account-total .usage-summary { margin-top: 0; }
 .usage-table { overflow-x: auto; }
 .usage-table table { width: 100%; border-collapse: collapse; font-size: 14px; }

@@ -69,7 +69,7 @@ try {
     const me = await (await request('/api/me', cookie)).json();
     assert.deepEqual(me.entries.map(e => e.id), username === 'dawn' ? ['dawn', 'zw', 'gj', 'crj', 'tx'] : [username, 'tx']);
     assert.equal(me.is_admin, username === 'dawn');
-    for (const entry of me.entries) assert.equal(entry.usage.used_bytes, entry.id === 'tx' ? 969 * 1024 ** 3 : 110e9);
+    for (const entry of me.entries) assert.equal(entry.usage, undefined, 'Home node metadata does not expose other users usage');
     assert.equal(me.usage.personal.used_bytes, 110e9);
     assert.equal(me.usage.shared.used_bytes, 969 * 1024 ** 3);
     assert.equal(me.usage.shared.remaining_bytes, 31 * 1024 ** 3);

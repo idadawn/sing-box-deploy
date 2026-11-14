@@ -65,10 +65,8 @@ try {
   assert.deepEqual(me.entries.map(e => e.id), ['dawn', 'zw', 'gj', 'crj', 'tx']);
   assert.equal(me.usage.personal.used_bytes, 3e9, 'All-line visibility must not combine other users into DAWN quota');
   assert.equal(me.usage.shared.used_bytes, 30e9);
-  for (const [i, entry] of me.entries.filter(e => e.id !== 'tx').entries()) {
-    assert.equal(entry.usage.used_bytes, (i + 1) * 3e9, 'Every card has its own ISP measurement');
-    assert.equal(entry.usage.quota_bytes, 100 * 1024 ** 3);
-  }
+  assert.equal(me.overview, undefined);
+  for (const entry of me.entries) assert.equal(entry.usage, undefined, 'Home node metadata must not expose another account measurement');
   const token = new URL(me.entries[0].clash, 'https://fixture.example').searchParams.get('token');
   for (const path of ['/v2?raw=1', '/c', '/s']) {
     const result = await request(path, cookies.dawn); assert.equal(result.status, 200);

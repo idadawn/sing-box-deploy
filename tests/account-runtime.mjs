@@ -45,6 +45,7 @@ try {
   const signed = await fetch(origin + '/api/usage/report', { method: 'POST', body: report, headers: {
     'Content-Type': 'application/json', 'X-Meter-Timestamp': String(now), 'X-Meter-Signature': createHmac('sha256', key).update(now + '.' + report).digest('hex') } });
   assert.equal(signed.status, 200, await signed.text());
+  assert.equal((await req('/api/admin/usage')).status, 401);
   for (const [i, name] of names.entries()) {
     const login = await req('/api/login', null, { username: name, password: demoPassword });
     assert.equal(login.status, 200); const cookie = login.headers.get('Set-Cookie').split(';')[0];
@@ -52,8 +53,29 @@ try {
     assert.equal(me.usage.account_mode, true); assert.equal(me.usage.personal.used_bytes, (2*i+3)*GB);
     assert.equal(me.usage.personal.reset_at, reset); assert.equal(me.usage.period.start, start);
     assert.equal(me.usage.shared.used_bytes, 991*GB);
-    assert.equal(me.overview?.accounts.length, name === 'dawn' ? 4 : undefined, 'Only admins may see other account totals');
-    if (me.overview) assert.equal(me.overview.legacy.used_bytes, 11*GB);
+    assert.equal(me.overview, undefined, 'Home must not fetch other account details, including for administrators');
+    assert.ok(me.entries.every(entry => entry.usage === undefined), 'Node cards must not carry per-line account usage');
+    const adminResponse = await req('/api/admin/usage', cookie);
+    assert.equal(adminResponse.status, name === 'dawn' ? 200 : 403, 'Admin authorization is enforced on the server');
+    if (name === 'dawn') {
+      const overview = await adminResponse.json();
+      assert.equal(overview.accounts.length, 4); assert.equal(overview.legacy.used_bytes, 11*GB);
+      assert.equal(overview.shared.used_bytes, 991*GB);
+      const selected = await (await req('/api/admin/usage?account=zw', cookie)).json();
+      assert.deepEqual(selected.accounts.map(a => a.username), ['zw']);
+      assert.equal(selected.accounts[0].usage.used_bytes, 5*GB);
+      assert.deepEqual(selected.account_names.sort(), [...names].sort());
+      assert.equal((await req('/api/admin/usage?account=missing', cookie)).status, 404);
+      assert.equal((await req('/api/admin/usage?account=zw&account=dawn', cookie)).status, 400);
+      assert.equal((await req('/api/admin/usage?account=../dawn', cookie)).status, 400);
+      assert.equal((await req('/api/admin/usage', cookie, {})).status, 405);
+    } else {
+      assert.equal((await req('/api/admin/usage?account=' + name, cookie)).status, 403);
+      assert.equal((await fetch(origin + '/api/admin/usage', { headers: { Cookie: cookie, 'X-Admin-User': 'dawn' } })).status, 403);
+    }
+    const token = new URL(me.entries[0].clash, origin).searchParams.get('token');
+    assert.equal((await req('/api/admin/usage?token=' + token)).status, 401, 'A subscription token cannot enter the admin API');
+    assert.equal((await fetch(origin + '/api/admin/usage', { headers: { Authorization: 'Bearer ' + token } })).status, 401);
     for (const entry of me.entries) {
       for (const field of ['clash', 'v2', 'extension'].filter(f => entry[f])) {
         const response = await req(entry[field]); assert.equal(response.status, 200, name + ':' + entry.id + ':' + field);
@@ -71,6 +93,8 @@ try {
     }
     if (name === 'zw') assert.equal((await req('/c?isp=gj', cookie)).status, 403);
     assert.deepEqual((await (await req('/api/me', cookie)).json()).entries, me.entries, 'Refreshing must preserve subscription URLs');
+    await req('/api/logout', cookie, {});
+    assert.equal((await req('/api/admin/usage', cookie)).status, 401, 'Expired/revoked sessions cannot reuse admin access');
   }
   for (const path of ['/functions/_private/accounts.mjs', '/private-account-credentials.json', '/wrangler.toml']) assert.equal((await req(path)).status, 404);
   console.log('Account runtime passed: ISP/direct credentials isolated per account, admin uses own identity, common billing cycle, private overview, and all client formats');

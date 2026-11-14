@@ -177,9 +177,9 @@ export function createHandler({ catalog, globalSource, handlers, accountCredenti
       if (['/', '/index.html', '/portal.js', '/portal.css'].includes(path)) return context.next();
       if (/^\/rules\/[a-z0-9-]+\.(txt|list|json)$/.test(path) || path === '/sr') return context.next();
     }
-    if (!routes.has(path) && !['/api/me', '/subscriptions.json', '/api/login', '/api/activate', '/api/logout', '/api/password', '/api/rotate-token'].includes(path)) return error('Not found', 404);
+    if (!routes.has(path) && !['/api/me', '/api/admin/usage', '/subscriptions.json', '/api/login', '/api/activate', '/api/logout', '/api/password', '/api/rotate-token'].includes(path)) return error('Not found', 404);
     if (!env.SUB_AUTH_DB || typeof env.SUB_AUTH_KEY !== 'string' || env.SUB_AUTH_KEY.length < 43) return error('登录服务暂不可用', 503);
-    if (path.startsWith('/api/') && path !== '/api/me') return api(context, path, env.SUB_AUTH_KEY);
+    if (path.startsWith('/api/') && !['/api/me', '/api/admin/usage'].includes(path)) return api(context, path, env.SUB_AUTH_KEY);
     if (!['GET', 'HEAD'].includes(request.method)) return error('Method not allowed', 405);
     const tokens = url.searchParams.getAll('token');
     const bearer = request.headers.get('Authorization');
@@ -194,24 +194,33 @@ export function createHandler({ catalog, globalSource, handlers, accountCredenti
     // enabled-account and token validation above still apply to administrators.
     const admins = (env.SUB_ADMIN_USERS || '').split(',').map(name => name.trim().toLowerCase()).filter(Boolean);
     const isAdmin = admins.every(name => USERNAME.test(name)) && admins.includes(user.username);
+    if (path === '/api/admin/usage') {
+      if (!isAdmin) return error('仅管理员可查询账号流量', 403);
+      if (!accountMode(env)) return error('尚未启用账号总流量统计', 409);
+      const selected = url.searchParams.getAll('account');
+      if (selected.length > 1 || (selected.length && !USERNAME.test(selected[0]))) return error('无效的账号查询', 400);
+      const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned, user.username);
+      const overview = await billingOverview(env.SUB_AUTH_DB, env, usage.shared);
+      const accountNames = overview.accounts.map(item => item.username);
+      if (selected.length && !accountNames.includes(selected[0])) return error('账号不存在', 404);
+      return json({ ...overview, accounts: selected.length ? overview.accounts.filter(item => item.username === selected[0]) : overview.accounts,
+        account_names: accountNames, shared: usage.shared, period: usage.period });
+    }
     const allowed = isAdmin ? catalog.map(entry => entry.id) : assigned;
     const ownCredentials = accountMode(env) ? accountCredentials[user.username] : null;
     if (accountMode(env) && !ownCredentials) return error('账号节点正在配置，请稍后更新', 503);
     if (path === '/api/me' || path === '/subscriptions.json') {
       const personalToken = await subscriptionToken(user, env.SUB_AUTH_KEY);
       const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned, user.username);
-      const overview = isAdmin && accountMode(env) ? await billingOverview(env.SUB_AUTH_DB, env, usage.shared) : undefined;
       const entries = await Promise.all(catalog.filter(entry => allowed.includes(entry.id)).map(async entry => {
         const result = { ...entry };
         for (const key of ['v2', 'clash', 'shadowrocket']) {
           if (result[key]) { const link = new URL(result[key], url.origin); link.searchParams.set('token', personalToken); result[key] = link.pathname + link.search; }
         }
         if (entry.kind !== 'tx-direct') result.extension = '/s?isp=' + encodeURIComponent(entry.id) + '&token=' + encodeURIComponent(personalToken);
-        result.usage = entry.kind === 'tx-direct' ? usage.shared : accountMode(env) ? usage.personal : isAdmin
-          ? await ispUsage(env.SUB_AUTH_DB, env, entry.id, usage.period) : usage.personal;
         return result;
       }));
-      return json(path === '/api/me' ? { username: user.username, is_admin: isAdmin, entries, usage, overview } : entries);
+      return json(path === '/api/me' ? { username: user.username, is_admin: isAdmin, entries, usage } : entries);
     }
     const requested = url.searchParams.getAll('isp');
     if (requested.length > 1 || requested.some(id => !allowed.includes(id))) return error('没有这条线路的访问权限', 403);
