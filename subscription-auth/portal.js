@@ -1,6 +1,10 @@
 const $ = id => document.getElementById(id);
 const KIB = 1024, MIB = KIB ** 2, GIB = KIB ** 3;
-const gigabytes = bytes => bytes == null ? '—' : (bytes / GIB).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' GB';
+const formatTraffic = bytes => {
+  if (bytes == null) return '—';
+  const [scale, unit] = bytes >= GIB ? [GIB, 'GB'] : bytes >= MIB ? [MIB, 'MB'] : bytes >= KIB ? [KIB, 'KB'] : [1, 'B'];
+  return (bytes / scale).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' ' + unit;
+};
 const localDate = seconds => seconds ? new Date(seconds * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '待同步';
 let invite = new URLSearchParams(location.hash.slice(1)).get('invite');
 if (invite) history.replaceState(null, '', location.pathname); // Never send invitation in Referer/query logs.
@@ -81,10 +85,11 @@ function usageSummary(usage, direct) {
   }
   if (account) {
     for (const text of [
-      '上传 ' + gigabytes(usage.upload_bytes) + ' · 下载 ' + gigabytes(usage.download_bytes),
-      usage.remaining_bytes == null ? '完整剩余额度暂不可确定' : '个人剩余额度 ' + gigabytes(usage.remaining_bytes),
+      '上传 ' + formatTraffic(usage.upload_bytes) + ' · 下载 ' + formatTraffic(usage.download_bytes),
+      usage.remaining_bytes == null ? '完整剩余额度暂不可确定' : '个人剩余额度 ' + formatTraffic(usage.remaining_bytes),
       '下次重置：' + localDate(usage.reset_at) + '（北京时间）',
       '统计起点：' + localDate(usage.started_at) + '（北京时间）',
+      '同步于 ' + localDate(usage.observed_at) + '（北京时间）',
     ]) { const p = document.createElement('p'); p.className = 'usage-status'; p.textContent = text; box.append(p); }
   }
   return box;
@@ -98,7 +103,7 @@ function accountOverview(overview) {
   head.append(header); table.append(head, body);
   for (const { username, usage } of overview.accounts) {
     const row = document.createElement('tr');
-    for (const text of [username.toUpperCase(), gigabytes(usage.upload_bytes), gigabytes(usage.download_bytes), gigabytes(usage.used_bytes),
+    for (const text of [username.toUpperCase(), formatTraffic(usage.upload_bytes), formatTraffic(usage.download_bytes), formatTraffic(usage.used_bytes),
       usage.status === 'current' ? '本账期' : usage.status === 'partial' ? '历史未补齐' : usage.status === 'stale' ? '待同步' : '待接入']) {
       const td = document.createElement('td'); td.textContent = text; row.append(td);
     }
@@ -106,7 +111,7 @@ function accountOverview(overview) {
   }
   const wrapper = document.createElement('div'); wrapper.className = 'usage-table'; wrapper.append(table); box.append(wrapper);
   const legacy = document.createElement('p'); legacy.className = 'hint';
-  legacy.textContent = '旧节点未归属流量（接入后）：' + gigabytes(overview.legacy?.used_bytes) + '。旧共享凭据无法识别使用人，请各客户端更新订阅。';
+  legacy.textContent = '旧节点未归属流量（接入后）：' + formatTraffic(overview.legacy?.used_bytes) + '。旧共享凭据无法识别使用人，请各客户端更新订阅。';
   const note = document.createElement('p'); note.className = 'hint';
   note.textContent = '个人统计上传＋下载业务流量，每笔只计一次。KiwiVM 整机账单还包含两段转发、协议及系统流量；历史未归属部分不分摊到个人。';
   box.append(legacy, note);
@@ -171,6 +176,7 @@ for (const id of ['loginForm', 'activateForm', 'passwordForm']) {
   });
 }
 $('logout').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/logout', {}); $('entries').replaceChildren(); view('loginView'); }));
+$('refreshUsage').addEventListener('click', event => action(event.currentTarget, load));
 $('rotate').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/rotate-token', {}); await load(); message('链接已重置。请在所有客户端中替换订阅链接。'); }));
 if (invite) view('activateView');
 else load().catch(error => { view('loginView'); if (error.status !== 401) message(error.message, true); });

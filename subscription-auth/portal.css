@@ -26,6 +26,7 @@
 .usage-remaining { margin: 12px 0 8px; font-weight: 600; }
 .usage-summary p.usage-status { margin: 5px 0 0; line-height: 1.5; }
 .account-total, .account-overview { margin-bottom: 24px; }
+.account-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .account-total .usage-summary { margin-top: 0; }
 .usage-table { overflow-x: auto; }
 .usage-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
