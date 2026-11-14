@@ -72,7 +72,47 @@ export async function providerUsage(db, env) {
   } catch { return empty; }
 }
 
-export async function accountUsage(db, env, allowed) {
+export const accountMode = env => env.SUB_ACCOUNT_USAGE_ENABLED === 'true';
+
+export async function billingAccountUsage(db, env, username, shared) {
+  shared ||= await providerUsage(db, env);
+  const empty = { source: 'account', measurement: 'application_payload', quota_bytes: 100 * GIB,
+    upload_bytes: null, download_bytes: null, used_bytes: null, remaining_bytes: null,
+    status: 'unavailable', over_quota: false, started_at: null, observed_at: null,
+    reset_at: shared.reset_at, period_start: null };
+  if (!shared.reset_at || !username) return empty;
+  try {
+    const { sources, active } = usageSources(env);
+    const slots = sources.map(() => '?').join(','), activeSlots = active.length ? active.map(() => '?').join(',') : 'NULL';
+    const row = await db.prepare(`SELECT COUNT(*) AS n, SUM(upload_bytes) AS up, SUM(download_bytes) AS down,
+      MIN(started_at) AS started, MIN(cycle_start) AS cycle_start, MAX(has_gap) AS gap,
+      MIN(CASE WHEN source IN (${activeSlots}) THEN observed_at END) AS observed,
+      SUM(CASE WHEN source IN (${activeSlots}) THEN 1 ELSE 0 END) AS active_n
+      FROM account_usage WHERE source IN (${slots}) AND service_id=? AND reset_at=? AND account=?`)
+      .bind(...active, ...active, ...sources, env.SUB_KIWIVM_VEID, shared.reset_at, username).first();
+    if (!row.n) return empty;
+    const used = row.up + row.down, partial = row.gap > 0 || row.active_n !== active.length;
+    const stale = shared.reset_at <= Date.now() / 1000 || (row.observed !== null && row.observed < Date.now() / 1000 - 300);
+    return { ...empty, upload_bytes: row.up, download_bytes: row.down, used_bytes: used,
+      remaining_bytes: partial || stale ? null : Math.max(0, empty.quota_bytes - used),
+      status: stale ? 'stale' : partial ? 'partial' : 'current', over_quota: used >= empty.quota_bytes,
+      started_at: row.started, observed_at: row.observed, period_start: row.cycle_start };
+  } catch { return empty; }
+}
+
+export async function billingOverview(db, env, shared) {
+  const row = await db.prepare('SELECT json_group_array(username) AS names FROM (SELECT username FROM users ORDER BY username)').first();
+  const accounts = await Promise.all(JSON.parse(row.names || '[]').map(async username =>
+    ({ username, usage: await billingAccountUsage(db, env, username, shared) })));
+  return { accounts, legacy: await billingAccountUsage(db, env, '__legacy__', shared) };
+}
+
+export async function accountUsage(db, env, allowed, username) {
+  if (accountMode(env)) {
+    const shared = await providerUsage(db, env), personal = await billingAccountUsage(db, env, username, shared);
+    return { period: { id: 'kiwivm:' + shared.reset_at, start: personal.period_start, end: shared.reset_at, timezone: 'UTC' },
+      mode: 'notify_only', account_mode: true, personal, shared };
+  }
   const period = usagePeriod();
   const personal = await aggregate(db, env, period, allowed.filter(id => id !== 'tx').map(id => 'isp:' + id), 100 * GIB);
   // This is the public NIC total, not personal + direct counters. No double counting.
@@ -82,13 +122,13 @@ export async function accountUsage(db, env, allowed) {
 }
 
 async function bodyText(request) {
-  if (!request.headers.get('Content-Type')?.startsWith('application/json') || Number(request.headers.get('Content-Length')) > 16384) return null;
+  if (!request.headers.get('Content-Type')?.startsWith('application/json') || Number(request.headers.get('Content-Length')) > 65536) return null;
   const reader = request.body?.getReader(); if (!reader) return null;
   const chunks = []; let length = 0;
   while (true) {
     const { value, done } = await reader.read(); if (done) break;
     length += value.length;
-    if (length > 16384) { await reader.cancel(); return null; }
+    if (length > 65536) { await reader.cancel(); return null; }
     chunks.push(value);
   }
   const joined = new Uint8Array(length); let offset = 0;
@@ -137,6 +177,35 @@ export async function ingestUsage(context, catalog) {
       WHERE excluded.observed_at > provider_usage.observed_at`)
       .bind(p.name, p.service_id, p.used_bytes, p.quota_bytes, p.reset_at, p.observed_at, data.source, period.id, data.generation));
   }
+  if (data.account_usage !== undefined) {
+    const a = data.account_usage;
+    if (!accountMode(env) || !a || a.service_id !== env.SUB_KIWIVM_VEID || !integer(a.reset_at) ||
+        a.reset_at <= data.observed_at || a.reset_at > data.observed_at + 40 * 86400 ||
+        !(a.start_at === null || (integer(a.start_at) && a.start_at <= data.observed_at)) ||
+        !Array.isArray(a.counters) || !a.counters.length || a.counters.length > 65) return reply('Invalid account cycle', 400);
+    const users = await env.SUB_AUTH_DB.prepare('SELECT json_group_array(username) AS names FROM users').first();
+    const names = new Set([...JSON.parse(users.names || '[]'), '__legacy__']), seenAccounts = new Set();
+    const identity = await env.SUB_AUTH_DB.prepare('SELECT generation FROM account_generations WHERE source=? AND service_id=? AND reset_at=?')
+      .bind(data.source, a.service_id, a.reset_at).first();
+    if (identity && identity.generation !== data.generation) return reply('Account ledger changed; restore the original ledger', 409);
+    queries.push(env.SUB_AUTH_DB.prepare('INSERT OR IGNORE INTO account_generations VALUES(?,?,?,?)')
+      .bind(data.source, a.service_id, a.reset_at, data.generation));
+    for (const c of a.counters) {
+      if (!c || !names.has(c.account) || seenAccounts.has(c.account) || !integer(c.upload_bytes) || !integer(c.download_bytes) ||
+          !integer(c.upload_bytes + c.download_bytes) || !integer(c.started_at) || !integer(c.observed_at) ||
+          c.observed_at > data.observed_at || c.started_at > c.observed_at || c.observed_at >= a.reset_at ||
+          (a.start_at !== null && c.started_at < a.start_at) || typeof c.has_gap !== 'boolean') return reply('Invalid account counters', 400);
+      seenAccounts.add(c.account);
+      queries.push(env.SUB_AUTH_DB.prepare(`INSERT INTO account_usage
+        SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM account_generations WHERE source=? AND service_id=? AND reset_at=? AND generation=?)
+        ON CONFLICT(source,service_id,reset_at,account) DO UPDATE SET
+        upload_bytes=MAX(upload_bytes,excluded.upload_bytes), download_bytes=MAX(download_bytes,excluded.download_bytes),
+        started_at=MIN(started_at,excluded.started_at), observed_at=MAX(observed_at,excluded.observed_at),
+        has_gap=MAX(has_gap,excluded.has_gap), sequence=MAX(sequence,excluded.sequence)`)
+        .bind(data.source, a.service_id, a.reset_at, c.account, c.upload_bytes, c.download_bytes, a.start_at, c.started_at, c.observed_at,
+          Number(c.has_gap), data.sequence, data.source, a.service_id, a.reset_at, data.generation));
+    }
+  }
   for (const c of data.counters) {
     if (!c || !allowed.has(c.meter) || seen.has(c.meter) || !integer(c.upload_bytes) || !integer(c.download_bytes) ||
       !integer(c.upload_bytes + c.download_bytes) || !integer(c.observed_at) || c.observed_at > data.observed_at || c.observed_at < period.start ||
@@ -169,7 +238,7 @@ export function withUsageHeaders(response, usage, { homepage } = {}) {
   if (usage.source) headers.set('X-Subscription-Usage-Source', usage.source);
   if (Number.isSafeInteger(usage.reset_at)) headers.set('X-Subscription-Usage-Reset-At', String(usage.reset_at));
   if (homepage) headers.set('Profile-Web-Page-URL', homepage);
-  if (response.ok && (!measured || (usage.source === 'kiwivm' && usage.reset_at <= Date.now() / 1000))) {
+  if (response.ok && (!measured || (['kiwivm', 'account'].includes(usage.source) && usage.reset_at <= Date.now() / 1000))) {
     // A database failure is not an empty month. Reject the refresh so clients
     // retain their previous configuration and known usage instead of resetting it.
     return new Response('流量数据暂不可用，请稍后更新订阅', { status: 503 });

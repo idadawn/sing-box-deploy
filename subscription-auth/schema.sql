@@ -50,3 +50,14 @@ CREATE TABLE IF NOT EXISTS provider_usage (
   observed_at INTEGER NOT NULL,
   PRIMARY KEY(provider, service_id)
 );
+CREATE TABLE IF NOT EXISTS account_usage (
+  source TEXT NOT NULL, service_id TEXT NOT NULL, reset_at INTEGER NOT NULL,
+  account TEXT NOT NULL, upload_bytes INTEGER NOT NULL, download_bytes INTEGER NOT NULL,
+  cycle_start INTEGER, started_at INTEGER NOT NULL, observed_at INTEGER NOT NULL,
+  has_gap INTEGER NOT NULL, sequence INTEGER NOT NULL,
+  PRIMARY KEY(source, service_id, reset_at, account)
+);
+CREATE TABLE IF NOT EXISTS account_generations (
+  source TEXT NOT NULL, service_id TEXT NOT NULL, reset_at INTEGER NOT NULL,
+  generation TEXT NOT NULL, PRIMARY KEY(source, service_id, reset_at)
+);

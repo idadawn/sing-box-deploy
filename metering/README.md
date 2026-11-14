@@ -1,8 +1,30 @@
 # 流量额度与计量
 
+## 个人总流量：ISP + 公共直出
+
+启用 `SUB_ACCOUNT_CREDENTIALS_FILE` 后，每个账号的 Trojan、Hysteria2 凭据独立，覆盖该账号获授权的 ISP 入口与公共直出入口。sing-box 通过 `stats.users` 的认证身份累计上传与下载；从 ISP 入口按规则转到 `direct-out` 的流量同样包含在个人总量中，不再只取 ISP outbound。管理员使用其他 ISP 线路时，仍使用管理员自己的凭据并计入管理员。节点订阅 URL、端口、TLS、出口路由和授权范围保持原有语义。
+
+个人与公共套餐使用 KiwiVM 返回的同一 `reset_at`。本机保存逐采样区间，供应商失联跨账期时先保留证据，收到新重置时间后再归档，不按自然月清零。周期交界按采样结束时间归属，正常最多一个采样间隔的误差；长间隔跨界或代理计数器重启会标记部分统计。旧账期未发送快照单独排队，不因同一自然月内切换供应商账期而覆盖。D1 使用独立 `account_usage` / `account_generations` 表，重复上报不会重复加量，账本代次变化拒绝覆盖旧值。
+
+首次启用没有完整历史：页面显示“接入后已用 · 历史未补齐”、统计起点，完整个人剩余额度暂不推算。旧个人 ISP 自然月账本保留用于诊断，不混入新账期。保留的旧凭据统一标记 `legacy-*`，其后续业务流量归入管理员可见的“旧节点未归属”，不猜测分摊。所有客户端须更新原订阅以切到个人凭据；重置订阅令牌不能替代更新代理凭据。旧共享凭据的停用需要单独安排用户切换，不在计量发布时突然断开用户。
+
+个人 100 GB 继续是提醒额度，现覆盖 ISP + 直出且随 KiwiVM 账期重置。个人业务载荷只计一次；供应商整机账单包含两段网络传输、协议和系统流量，因此不把个人合计伪装成整机账单的精确分摊。管理员能查看各账号总量，普通用户只收到自己的明细。所有节点订阅流量条统一显示订阅所属账号总量，公共套餐的真实余量在网页单独展示。
+
+### 配置与发布
+
+1. 准备 0600 私有 JSON：`{"dawn":{"scopes":["dawn","tx"],"trojan":"独立随机凭据","hysteria":"另一独立随机凭据"}}`。管理员可列全部获授权 ISP；每种凭据至少 32 个 URL-safe 字符，跨账号/协议不得复用。
+2. 用 `python3 metering/provision_accounts.py runtime.json meter.json accounts.json runtime-new.json meter-new.json` 生成候选配置。它保留路由和监听端口，为旧凭据改统计名、为新凭据启用用户统计，不直接修改服务。
+3. 对候选运行 `sing-box check`，用隔离进程实测每个账号的 TCP/HY2、ISP/直出出口和用户计数；验证其他账号计数不增。备份原运行配置、采集配置、SQLite 和代码后，完成一次旧采集，再切换并重启 `sing-box-gw`。
+4. 采集器必须同时部署 `collector.py` 和 `accounts.py`。运行配置中的 `account_users` 映射认证名到账号，`__legacy__` 为保留旧凭据统计集合。配置 `kiwivm` 与密钥要求沿用下节。
+5. 应用更新后的 `schema.sql`。构建鉴权网站时设置 `SUB_ACCOUNT_CREDENTIALS_FILE`、`SUB_KIWIVM_VEID`；构建器把私有凭据写入 Functions 私有模块并生成 `SUB_ACCOUNT_USAGE_ENABLED=true`。控制台手工发布须同步设置该文本变量。先验证签名上报，再刷新所有人的订阅。不可将私有 Functions 源码或账号 JSON 当静态资产上传。
+
+已启用账号账期的部署暂不接受旧的一键跨供应商迁移：迁移器在写入目标前明确拒绝，要求先配置目标供应商账期，避免丢失个人计量。
+
+依据：[sing-box V2Ray 用户统计](https://sing-box.sagernet.org/configuration/experimental/v2ray-api/)、[v1.14.0 认证用户计数实现](https://github.com/SagerNet/sing-box/blob/v1.14.0/experimental/v2rayapi/stats.go)。
+
 ## KiwiVM 公共套餐（gw 当前模式）
 
-公共套餐用量、总额度和下次重置时间直接来自 KiwiVM `getServiceInfo` 的 `data_counter`、`plan_monthly_data`、`data_next_reset`；前两项按 API 的 `monthly_data_multiplier` 换算。网页按 1024 进位显示 GB，与 KiwiVM 面板核对。公共余量不再用自然月网卡计数计算，个人 ISP 的 100 GB 仍按 UTC 自然月统计。
+公共套餐用量、总额度和下次重置时间直接来自 KiwiVM `getServiceInfo` 的 `data_counter`、`plan_monthly_data`、`data_next_reset`；前两项按 API 的 `monthly_data_multiplier` 换算。网页按 1024 进位显示 GB，与 KiwiVM 面板核对。公共余量不再用自然月网卡计数计算；启用个人总流量后，个人 100 GB 也使用供应商账期。
 
 采集器每分钟查询供应商，只调用只读 `getServiceInfo`。服务器私有采集配置增加 `kiwivm: {"veid":"你的服务 ID","key_file":"/etc/subscription-meter-gw/kiwivm.key"}`，密钥文件必须为 0600。密钥不进入 Git、订阅、网页、D1 或报告；请求使用 HTTPS POST，禁止重定向。Pages 配置 `SUB_KIWIVM_VEID` 和 `SUB_KIWIVM_SOURCE`，仅允许指定采集源上报该服务。部署前应用 `schema.sql` 新增 `provider_usage` 表。
 

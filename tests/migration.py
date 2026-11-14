@@ -128,6 +128,7 @@ class MigrationTests(unittest.TestCase):
     def test_prepared_target_files_units_and_independent_ledger(self):
         files, manifest = bundle()
         files['collector.py'] = (ROOT / 'metering/collector.py').read_bytes()
+        files['accounts.py'] = (ROOT / 'metering/accounts.py').read_bytes()
         files['stats.proto'] = (ROOT / 'metering/stats.proto').read_bytes()
         before = copy.deepcopy(files)
         with tempfile.TemporaryDirectory() as td:

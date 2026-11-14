@@ -19,6 +19,9 @@ import time
 import urllib.request
 import urllib.parse
 import uuid
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import accounts
 
 
 def period_at(at):
@@ -37,16 +40,19 @@ def open_state(path):
         observed INTEGER, gap INTEGER, PRIMARY KEY(period,meter));
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS outbox(period TEXT PRIMARY KEY, sequence INTEGER, body TEXT);
+      CREATE TABLE IF NOT EXISTS account_outbox(period TEXT PRIMARY KEY, sequence INTEGER, body TEXT);
     ''')
+    accounts.prepare(db)
     with db:
         db.execute("INSERT OR IGNORE INTO meta VALUES('generation',?)", (uuid.uuid4().hex,))
     return db
 
 
-def record_sample(db, source, at, counters, provider=None):
+def record_sample(db, source, at, counters, provider=None, account_counters=None, service_id=None):
     """Cumulative raw values; first sample establishes a baseline, not past usage."""
     period, start = period_at(at)
     with db:
+        account_report = accounts.record(db, service_id, at, account_counters, provider) if account_counters is not None and service_id else None
         latest = db.execute('SELECT MAX(at) FROM raw').fetchone()[0]
         if latest is not None and at < latest:
             raise ValueError('Clock moved backwards')
@@ -95,6 +101,15 @@ def record_sample(db, source, at, counters, provider=None):
                 provider = json.loads(pending['body']).get('provider')
         if provider is not None:
             report['provider'] = provider
+        if account_report is not None:
+            report['account_usage'] = account_report
+        pending = db.execute('SELECT * FROM outbox WHERE period=?', (period,)).fetchone()
+        if pending:
+            previous = json.loads(pending['body']).get('account_usage')
+            if previous and (account_report is None or previous['reset_at'] != account_report['reset_at']):
+                db.execute('''INSERT INTO account_outbox VALUES(?,?,?) ON CONFLICT(period) DO UPDATE SET
+                    sequence=excluded.sequence, body=excluded.body WHERE excluded.sequence>account_outbox.sequence''',
+                    (previous['service_id'] + ':' + str(previous['reset_at']), pending['sequence'], pending['body']))
         # Coalesce unsent snapshots per month. Cumulative values preserve all bytes.
         db.execute('INSERT OR REPLACE INTO outbox VALUES(?,?,?)',
                    (period, sequence, json.dumps(report, separators=(',', ':'))))
@@ -195,15 +210,31 @@ def stats_sample(config):
     raw = subprocess.check_output([
         config.get('grpcurl', '/usr/local/bin/grpcurl'), '-plaintext', '-max-time', '10',
         '-import-path', str(Path(__file__).resolve().parent), '-proto', 'stats.proto',
-        '-d', '{"patterns":["outbound>>>"],"reset":false}', address,
+        '-d', '{"patterns":["outbound>>>","user>>>"],"reset":false}', address,
         'v2ray.core.app.stats.command.StatsService/QueryStats'], stderr=subprocess.DEVNULL, timeout=15)
     if before != epoch():
         raise ValueError('Service restarted while sampling')
     values = {item['name']: int(item.get('value', 0)) for item in json.loads(raw).get('stat', [])}
-    return {'isp:' + ident: (values['outbound>>>' + tag + '>>>traffic>>>uplink'],
+    result = {'isp:' + ident: (values['outbound>>>' + tag + '>>>traffic>>>uplink'],
                              values['outbound>>>' + tag + '>>>traffic>>>downlink'], before)
             for ident, tag in wanted.items()
             if 'outbound>>>' + tag + '>>>traffic>>>uplink' in values and 'outbound>>>' + tag + '>>>traffic>>>downlink' in values}
+    users = config.get('account_users', {})
+    configured = {u.get('name') for inbound in runtime.get('inbounds', []) for u in inbound.get('users', [])}
+    tracked = set(stats.get('stats', {}).get('users', []))
+    for account, names in users.items():
+        if not isinstance(names, list) or not names or not set(names).issubset(configured & tracked):
+            raise ValueError('Account user statistics are not configured')
+        # sing-box creates both counters lazily on the first routed connection.
+        # After validating the live user/stats lists, absence of both means zero.
+        up = down = 0
+        for name in names:
+            keys = ['user>>>' + name + '>>>traffic>>>' + direction for direction in ['uplink', 'downlink']]
+            if (keys[0] in values) != (keys[1] in values):
+                raise ValueError('Incomplete account counters')
+            up += values.get(keys[0], 0); down += values.get(keys[1], 0)
+        result['account:' + account] = (up, down, before)
+    return result
 
 
 def signed_headers(key, raw, at):
@@ -222,7 +253,8 @@ def send_pending(db, config):
     if not re.fullmatch(r'[A-Za-z0-9_-]{43,128}', key):
         raise ValueError('Invalid meter key')
     count = 0
-    for row in db.execute('SELECT * FROM outbox ORDER BY period').fetchall():
+    pending_rows = [(table, row) for table in ['account_outbox', 'outbox'] for row in db.execute('SELECT * FROM ' + table + ' ORDER BY period').fetchall()]
+    for table, row in pending_rows:
         request = urllib.request.Request(config['portal'].rstrip('/') + '/api/usage/report',
             data=row['body'].encode(), headers=signed_headers(key, row['body'], int(time.time())), method='POST')
         # Refuse redirects so signed private reports cannot move to another host.
@@ -234,7 +266,7 @@ def send_pending(db, config):
             if response.status != 200 or result.get('ok') is not True:
                 raise ValueError('Meter report rejected')
         with db:
-            db.execute('DELETE FROM outbox WHERE period=? AND sequence=?', (row['period'], row['sequence']))
+            db.execute('DELETE FROM ' + table + ' WHERE period=? AND sequence=?', (row['period'], row['sequence']))
         count += 1
     return count
 
@@ -277,7 +309,7 @@ def main():
         try:
             personal = stats_sample(config)
             counters.update(personal)
-            if len(personal) < len(config['isp_outbounds']):
+            if len([key for key in personal if key.startswith('isp:')]) < len(config['isp_outbounds']):
                 unavailable.append('personal_isp_statistics_incomplete')
         except (ValueError, KeyError, OSError, subprocess.SubprocessError):
             unavailable.append('personal_isp_statistics')
@@ -300,7 +332,10 @@ def main():
                 # Retain the provider's previous snapshot and original timestamp.
                 # Provider downtime must not interrupt personal/NIC accounting.
                 unavailable.append('kiwivm')
-            record_sample(db, config.get('source', 'la'), int(time.time()), counters, provider)
+            personal = {key.removeprefix('account:'): value for key, value in counters.items() if key.startswith('account:')}
+            monthly = {key: value for key, value in counters.items() if not key.startswith('account:')}
+            record_sample(db, config.get('source', 'la'), int(time.time()), monthly, provider,
+                          personal if config.get('account_users') else None, config.get('kiwivm', {}).get('veid'))
             sent = send_pending(db, config)
             print(json.dumps({'reports_sent': sent, 'unavailable': unavailable}))
         finally:

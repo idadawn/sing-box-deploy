@@ -2,13 +2,14 @@ import { readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync, existsSyn
 import { usageSources } from '../subscription-auth/usage.mjs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readAccountCredentials, installAccountTemplates } from './account-credentials.mjs';
 
 export function buildAuth(directory, env = process.env) {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const enabled = /^(true|1|yes|on)$/i.test(env.SUB_AUTH_ENABLED || 'false');
   // Once protected, never silently fall back to a public deployment after env loss.
   if (!enabled) {
-    if (env.SUB_AUTH_ISP_CREDENTIALS_FILE) throw new Error('Private ISP credentials require SUB_AUTH_ENABLED=true');
+    if (env.SUB_AUTH_ISP_CREDENTIALS_FILE || env.SUB_ACCOUNT_CREDENTIALS_FILE) throw new Error('Private credentials require SUB_AUTH_ENABLED=true');
     if (existsSync(resolve(directory, '.auth-enabled'))) throw new Error('Protected Pages cannot be rebuilt without SUB_AUTH_ENABLED=true');
     return false;
   }
@@ -16,6 +17,8 @@ export function buildAuth(directory, env = process.env) {
   const admins = [...new Set((env.SUB_ADMIN_USERS || '').split(',').map(name => name.trim().toLowerCase()).filter(Boolean))];
   if (!admins.every(name => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(name))) throw new Error('Invalid subscription administrator');
   const catalog = JSON.parse(readFileSync(resolve(directory, 'subscriptions.json'), 'utf8'));
+  const accountCredentials = readAccountCredentials(env.SUB_ACCOUNT_CREDENTIALS_FILE, catalog);
+  if (Object.keys(accountCredentials).length && !env.SUB_KIWIVM_VEID) throw new Error('Account metering requires KiwiVM billing');
   let globalSource = readFileSync(resolve(directory, 'global-extension.js'), 'utf8');
   if (!globalSource.match(/const ispEntries = JSON\.parse\(atob\("([A-Za-z0-9+/=]+)"\)\)/)) throw new Error('Global extension scope marker missing');
   if (env.SUB_AUTH_ISP_CREDENTIALS_FILE) {
@@ -54,6 +57,13 @@ export function buildAuth(directory, env = process.env) {
     }
   }
   mkdirSync(resolve(directory, 'functions/_private'), { recursive: true });
+  writeFileSync(resolve(directory, 'functions/_private/accounts.mjs'), `export const accountCredentials = ${JSON.stringify(accountCredentials)};\n`, { mode: 0o600 });
+  if (Object.keys(accountCredentials).length) {
+    for (const name of ['c.js', 'v2.js', 'tx.js', 'tx-v2.js']) {
+      const path = resolve(directory, 'functions', name);
+      writeFileSync(path, installAccountTemplates(readFileSync(path, 'utf8')), { mode: 0o600 });
+    }
+  }
   mkdirSync(resolve(directory, 'functions'), { recursive: true });
   writeFileSync(resolve(directory, 'functions/_private/catalog.mjs'), `export const catalog = ${JSON.stringify(catalog)};\nexport const globalSource = ${JSON.stringify(globalSource)};\n`, { mode: 0o600 });
   copyFileSync(resolve(root, 'subscription-auth/auth.mjs'), resolve(directory, 'functions/_private/auth.mjs'));
@@ -75,7 +85,7 @@ export function buildAuth(directory, env = process.env) {
   const veid = env.SUB_KIWIVM_VEID || '';
   const providerSource = env.SUB_KIWIVM_SOURCE || source;
   if (veid && (!/^[1-9][0-9]{0,11}$/.test(veid) || !sources.includes(providerSource))) throw new Error('Invalid KiwiVM source');
-  writeFileSync(resolve(directory, 'wrangler.toml'), `name = "${project}"\ncompatibility_date = "2025-01-01"\npages_build_output_dir = "."\n\n[vars]\nSUB_USAGE_SOURCE = "${source}"\nSUB_USAGE_EXTRA_SOURCES = "${sources.slice(1).join(',')}"\nSUB_USAGE_INACTIVE_SOURCES = "${sources.filter(s => !active.includes(s)).join(',')}"\nSUB_ADMIN_USERS = "${admins.join(',')}"\nSUB_KIWIVM_VEID = "${veid}"\nSUB_KIWIVM_SOURCE = "${providerSource}"\n\n[[d1_databases]]\nbinding = "SUB_AUTH_DB"\ndatabase_name = "subscription-auth"\ndatabase_id = "${env.SUB_AUTH_D1_ID}"\n`);
+  writeFileSync(resolve(directory, 'wrangler.toml'), `name = "${project}"\ncompatibility_date = "2025-01-01"\npages_build_output_dir = "."\n\n[vars]\nSUB_USAGE_SOURCE = "${source}"\nSUB_USAGE_EXTRA_SOURCES = "${sources.slice(1).join(',')}"\nSUB_USAGE_INACTIVE_SOURCES = "${sources.filter(s => !active.includes(s)).join(',')}"\nSUB_ADMIN_USERS = "${admins.join(',')}"\nSUB_KIWIVM_VEID = "${veid}"\nSUB_KIWIVM_SOURCE = "${providerSource}"\nSUB_ACCOUNT_USAGE_ENABLED = "${Object.keys(accountCredentials).length > 0}"\n\n[[d1_databases]]\nbinding = "SUB_AUTH_DB"\ndatabase_name = "subscription-auth"\ndatabase_id = "${env.SUB_AUTH_D1_ID}"\n`);
   return true;
 }
 

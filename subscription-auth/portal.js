@@ -1,5 +1,7 @@
 const $ = id => document.getElementById(id);
 const KIB = 1024, MIB = KIB ** 2, GIB = KIB ** 3;
+const gigabytes = bytes => bytes == null ? '—' : (bytes / GIB).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' GB';
+const localDate = seconds => seconds ? new Date(seconds * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '待同步';
 let invite = new URLSearchParams(location.hash.slice(1)).get('invite');
 if (invite) history.replaceState(null, '', location.pathname); // Never send invitation in Referer/query logs.
 function message(text = '', failed = false) { $('message').textContent = text; $('message').className = failed ? 'error' : ''; }
@@ -51,7 +53,8 @@ function usageSummary(usage, direct) {
   const box = document.createElement('div'); box.className = 'usage-summary';
   const label = document.createElement('p'), value = document.createElement('p'), status = document.createElement('span');
   const provider = direct && usage?.source === 'kiwivm';
-  label.className = 'hint'; label.textContent = provider ? '公共套餐流量 · KiwiVM' : direct ? '公共流量 · 整机共用' : '个人流量';
+  const account = usage?.source === 'account';
+  label.className = 'hint'; label.textContent = account ? '个人总流量 · ISP + 公共直出' : provider ? '公共套餐流量 · KiwiVM' : direct ? '公共流量 · 整机共用' : '个人流量';
   value.className = 'usage-value';
   const limit = usage?.quota_bytes == null ? '—' : (usage.quota_bytes / GIB).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
   const known = usage?.used_bytes !== null && usage?.used_bytes !== undefined;
@@ -62,6 +65,7 @@ function usageSummary(usage, direct) {
   const labels = { initialized: '本月已用', not_connected: '待接入', unavailable: '暂不可用', partial: '部分统计', stale: '待同步', current: '本月已用' };
   status.textContent = usage?.over_quota ? '已超额' : labels[usage?.status || 'not_connected'];
   if (provider) status.textContent = usage.status === 'current' ? (usage.over_quota ? '套餐流量已用尽' : '本账期已用') : usage.status === 'stale' ? '上次同步用量 · 待同步' : '等待 KiwiVM 数据';
+  if (account) status.textContent = usage.status === 'current' ? (usage.over_quota ? '个人额度已用尽' : '本账期已用') : usage.status === 'partial' ? '接入后已用 · 历史未补齐' : usage.status === 'stale' ? '待同步' : '等待个人流量数据';
   status.className = 'usage-status' + (usage?.over_quota ? ' over' : '');
   box.append(label, value, status);
   if (provider) {
@@ -75,12 +79,45 @@ function usageSummary(usage, direct) {
     updated.textContent = usage.observed_at ? '同步于 ' + date(usage.observed_at) + '（北京时间）' : '用量、额度和账期均以 KiwiVM 为准';
     box.append(remaining, reset, updated);
   }
+  if (account) {
+    for (const text of [
+      '上传 ' + gigabytes(usage.upload_bytes) + ' · 下载 ' + gigabytes(usage.download_bytes),
+      usage.remaining_bytes == null ? '完整剩余额度暂不可确定' : '个人剩余额度 ' + gigabytes(usage.remaining_bytes),
+      '下次重置：' + localDate(usage.reset_at) + '（北京时间）',
+      '统计起点：' + localDate(usage.started_at) + '（北京时间）',
+    ]) { const p = document.createElement('p'); p.className = 'usage-status'; p.textContent = text; box.append(p); }
+  }
   return box;
+}
+function accountOverview(overview) {
+  const box = $('accountOverview'); box.replaceChildren(); box.hidden = !overview;
+  if (!overview) return;
+  const heading = document.createElement('h2'); heading.textContent = '各账号总流量 · ISP + 公共直出'; box.append(heading);
+  const table = document.createElement('table'), head = document.createElement('thead'), header = document.createElement('tr'), body = document.createElement('tbody');
+  for (const text of ['账号', '上传', '下载', '合计', '统计状态']) { const th = document.createElement('th'); th.textContent = text; header.append(th); }
+  head.append(header); table.append(head, body);
+  for (const { username, usage } of overview.accounts) {
+    const row = document.createElement('tr');
+    for (const text of [username.toUpperCase(), gigabytes(usage.upload_bytes), gigabytes(usage.download_bytes), gigabytes(usage.used_bytes),
+      usage.status === 'current' ? '本账期' : usage.status === 'partial' ? '历史未补齐' : usage.status === 'stale' ? '待同步' : '待接入']) {
+      const td = document.createElement('td'); td.textContent = text; row.append(td);
+    }
+    body.append(row);
+  }
+  const wrapper = document.createElement('div'); wrapper.className = 'usage-table'; wrapper.append(table); box.append(wrapper);
+  const legacy = document.createElement('p'); legacy.className = 'hint';
+  legacy.textContent = '旧节点未归属流量（接入后）：' + gigabytes(overview.legacy?.used_bytes) + '。旧共享凭据无法识别使用人，请各客户端更新订阅。';
+  const note = document.createElement('p'); note.className = 'hint';
+  note.textContent = '个人统计上传＋下载业务流量，每笔只计一次。KiwiVM 整机账单还包含两段转发、协议及系统流量；历史未归属部分不分摊到个人。';
+  box.append(legacy, note);
 }
 async function load() {
   const data = await api('/api/me');
   $('accountName').textContent = data.username.toUpperCase();
   $('linesHeading').textContent = data.is_admin ? '全部线路' : '我的线路';
+  $('personalUsage').hidden = !data.usage?.account_mode;
+  $('personalUsage').replaceChildren(...(data.usage?.account_mode ? [usageSummary(data.usage.personal, false)] : []));
+  accountOverview(data.overview);
   $('entries').replaceChildren(...data.entries.map(entry => {
     const card = document.createElement('article'); card.className = 'panel';
     const head = document.createElement('div'), title = document.createElement('h2'), expiry = document.createElement('span'), address = document.createElement('p');
@@ -88,7 +125,10 @@ async function load() {
     head.className = 'entry-header'; title.textContent = direct ? '公共直出' : entry.id.toUpperCase();
     expiry.textContent = direct ? '视频 · 下载' : '个人 ISP';
     address.className = 'address'; address.textContent = entry.host || '';
-    head.append(title, expiry); card.append(head, usageSummary(entry.usage || (direct ? data.usage?.shared : data.usage?.personal), direct), importActions(entry));
+    head.append(title, expiry); card.append(head);
+    if (direct || !data.usage?.account_mode) card.append(usageSummary(entry.usage || (direct ? data.usage?.shared : data.usage?.personal), direct));
+    if (data.usage?.account_mode) { const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = '使用此节点的流量统一计入你的个人总量。'; card.append(hint); }
+    card.append(importActions(entry));
     const links = document.createElement('details'), summary = document.createElement('summary');
     summary.textContent = '链接与模块'; links.className = 'subscription-details';
     links.append(summary, address, linkRow('Clash', entry.clash), linkRow('v2rayN / v2rayNG / Shadowrocket', entry.v2));
@@ -106,7 +146,9 @@ async function load() {
   const over = [data.usage?.personal?.over_quota ? '个人流量' : null, data.usage?.shared?.over_quota ? '公共流量' : null].filter(Boolean);
   $('quotaAlert').hidden = !over.length;
   $('quotaAlert').textContent = over.length ? over.join('、') + '已超额。个人额度仅提醒；公共套餐耗尽可能由供应商暂停服务。' : '';
-  $('billingCycle').textContent = data.usage?.shared?.source === 'kiwivm'
+  $('billingCycle').textContent = data.usage?.account_mode
+    ? '个人与公共套餐按 KiwiVM 账期统计。请更新客户端订阅启用个人凭据；个人 100 GB 为提醒额度，整机可用量以 KiwiVM 为准。'
+    : data.usage?.shared?.source === 'kiwivm'
     ? '公共套餐用量、额度与重置时间以 KiwiVM 为准；个人 ISP 仍按每月 1 日 00:00 UTC 统计。'
     : '每月 1 日 00:00 UTC 重置 · 个人用量包含在整机公共额度内';
   view('accountView');

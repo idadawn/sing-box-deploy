@@ -10,7 +10,7 @@ D1 基础分配保持：`dawn → dawn,tx`、`zw → zw,tx`、`gj → gj,tx`、`
 
 界面编号统一显示为 `DAWN / ZW / GJ / CRJ`，内部值不变。客户端节点去掉 `T-` 前缀，例如 `DAWN-TJ`、`DAWN-HY2`；直出为 `DIRECT-TJ`、`DIRECT-HY2`。页面精简为额度和导入按钮，链接与 Telegram 模块放入折叠区。
 
-gw 公共套餐通过 `SUB_KIWIVM_VEID` 对接 KiwiVM 的真实用量、额度和重置时间，网页与订阅流量条同步；未知或过期快照不回退自然月。个人 ISP 每月 100 GB 维持 UTC 自然月。公共套餐耗尽可能由供应商暂停服务。未配置 KiwiVM 的旧内部模式才使用整机自然月 1000 GB 额度。接口、计量口径、隔离部署和迁移 SQL 见 [流量计量](../metering/README.md)。正式启用前先执行更新后的 `schema.sql`；采集密钥与登录密钥必须分开。
+gw 公共套餐通过 `SUB_KIWIVM_VEID` 对接 KiwiVM 的真实用量、额度和重置时间；未知或过期快照不回退自然月。通过 `SUB_ACCOUNT_CREDENTIALS_FILE` 开启个人总流量后，ISP + 公共直出按账号认证身份累计并使用同一供应商账期，所有节点订阅头显示所属账号总量，网页另列公共套餐。管理员可查看各账号上传/下载/合计，使用别人的 ISP 线路仍计入管理员本人。初次接入和旧节点未归属流量明确标注，不捏造历史分摊。公共套餐耗尽可能由供应商暂停服务。接口、计量口径与部署步骤见 [流量计量](../metering/README.md)。正式启用前先执行更新后的 `schema.sql`；采集密钥与登录密钥必须分开。
 
 登录页与个人页面统一使用“自由翱翔”品牌。每条获授权线路提供“导入 Clash”“导入 v2rayNG”和“导入 Shadowrocket”：前两者将完整个人订阅 URL 编码为协议链接的 `url` 参数；Shadowrocket 使用 `shadowrocket://add/sub://` 加完整 URL 的 Base64 编码。账号的 ISP 与令牌不会因参数截断丢失。v2rayNG 入口用于 Android，Shadowrocket 入口用于 iPhone / iPad；未安装或浏览器无法唤起时，可复制同一专属链接手动导入。网页不自动启动客户端，也不宣称已经完成客户端内的导入。
 
