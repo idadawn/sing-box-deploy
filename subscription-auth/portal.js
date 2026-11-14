@@ -216,6 +216,11 @@ async function action(button, task) {
   button.disabled = true; message();
   try { await task(); } catch (error) { message(error.message, true); } finally { button.disabled = false; }
 }
+function loadError(error) {
+  if (error.status === 401) { clearSession(); return; }
+  if (location.hash === '#admin') history.replaceState(null, '', location.pathname + location.search);
+  view(currentUser ? 'accountView' : 'loginView'); message(error.message, true);
+}
 for (const id of ['loginForm', 'activateForm', 'passwordForm']) {
   $(id).addEventListener('submit', event => {
     event.preventDefault(); const form = event.currentTarget, data = Object.fromEntries(new FormData(form));
@@ -234,7 +239,7 @@ $('refreshUsage').addEventListener('click', event => action(event.currentTarget,
 $('refreshAdmin').addEventListener('click', event => action(event.currentTarget, loadAdmin));
 $('adminAccount').addEventListener('change', event => action(event.currentTarget, loadAdmin));
 $('backToAccount').addEventListener('click', () => { location.hash = ''; });
-window.addEventListener('hashchange', () => { message(); load().catch(error => { if (error.status === 401) clearSession(); else message(error.message, true); }); });
+window.addEventListener('hashchange', () => { message(); load().catch(loadError); });
 $('rotate').addEventListener('click', event => action(event.currentTarget, async () => { await api('/api/rotate-token', {}); await load(); message('链接已重置。请在所有客户端中替换订阅链接。'); }));
 if (invite) view('activateView');
-else load().catch(error => { if (error.status === 401) clearSession(); else { view('loginView'); message(error.message, true); } });
+else load().catch(loadError);
