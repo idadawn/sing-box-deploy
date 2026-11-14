@@ -201,6 +201,8 @@ def install(files, manifest, options):
         private_write('/opt/subscription-meter-gw/' + name, files[name])
     private_write('/etc/subscription-meter-gw/report.key', files['report.key'])
     meter = json.loads(files['meter.json'])
+    # A new host has a different supplier bill. Never inherit the old API key path.
+    meter.pop('kiwivm', None)
     meter.update(source=options['meter_source'], interface=interface, state_file='/var/lib/subscription-meter-gw/state.sqlite3',
                  grpcurl='/opt/subscription-meter-gw/grpcurl', key_file='/etc/subscription-meter-gw/report.key')
     private_write(METER, json.dumps(meter).encode())

@@ -116,5 +116,48 @@ assert.equal((await accountUsage(db, env, ['dawn'])).personal.status, 'partial',
 env.SUB_USAGE_INACTIVE_SOURCES = 'unknown';
 assert.equal((await send(initial)).status, 503);
 assert.equal((await accountUsage(db, env, ['dawn'])).personal.status, 'unavailable');
+
+// The provider bill must never reset with the personal calendar month.
+env.SUB_USAGE_EXTRA_SOURCES = 'dmit'; env.SUB_USAGE_INACTIVE_SOURCES = '';
+env.SUB_KIWIVM_VEID = '123';
+usage = await accountUsage(db, env, ['dawn']);
+assert.equal(usage.shared.used_bytes, null);
+assert.equal(usage.shared.remaining_bytes, null);
+assert.equal(withUsageHeaders(new Response(''), usage.shared).status, 503);
+const provider = { name: 'kiwivm', service_id: '123', used_bytes: 969 * GB,
+  quota_bytes: 1000 * GB, reset_at: now + 3 * 86400, observed_at: now };
+const providerReport = { ...initial, provider };
+assert.equal((await send(providerReport)).status, 200);
+usage = await accountUsage(db, env, ['dawn']);
+assert.equal(usage.shared.used_bytes, 969 * GB);
+assert.equal(usage.shared.remaining_bytes, 31 * GB);
+assert.equal(usage.shared.reset_at, provider.reset_at);
+assert.equal(usage.shared.source, 'kiwivm');
+const providerHeader = withUsageHeaders(new Response('', { headers: { 'Subscription-Userinfo': 'expire=0' } }), usage.shared);
+assert.equal(providerHeader.headers.get('Subscription-Userinfo'), `upload=0; download=${969 * GB}; total=${1000 * GB}; expire=0`);
+assert.equal(providerHeader.headers.get('X-Subscription-Usage-Reset-At'), String(provider.reset_at));
+assert.equal(providerHeader.headers.get('X-Subscription-Usage-Source'), 'kiwivm');
+for (const change of [ { service_id: '456' }, { used_bytes: -1 }, { quota_bytes: 0 },
+  { reset_at: now - 1 }, { reset_at: now + 41 * 86400 }, { observed_at: now + 1 } ]) {
+  assert.equal((await send({ ...providerReport, provider: { ...provider, ...change } })).status, 400);
+}
+assert.equal((await send({ ...providerReport, source: 'dmit', generation: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' })).status, 400, 'Another collector cannot overwrite the provider bill');
+assert.equal((await send({ ...providerReport, provider: { ...provider, used_bytes: 1, observed_at: now - 1 } })).status, 200);
+assert.equal((await accountUsage(db, env, ['dawn'])).shared.used_bytes, 969 * GB, 'Old snapshots cannot roll back provider use');
+sql.prepare('UPDATE monthly_usage SET period=? WHERE period=?').run('1998-01', period.id);
+assert.equal((await accountUsage(db, env, ['dawn'])).shared.used_bytes, 969 * GB, 'No personal-month records must not reset the provider bill');
+sql.prepare('UPDATE provider_usage SET observed_at=?').run(now - 601);
+usage = await accountUsage(db, env, ['dawn']);
+assert.equal(usage.shared.status, 'stale'); assert.equal(usage.shared.used_bytes, 969 * GB);
+assert.equal(usage.shared.remaining_bytes, null, 'Stale remaining allowance must not look current');
+sql.prepare('UPDATE provider_usage SET reset_at=?').run(now - 1);
+assert.equal(withUsageHeaders(new Response(''), (await accountUsage(db, env, ['dawn'])).shared).status, 503, 'An expired cycle must not be advertised as current');
+assert.equal((await send({ ...providerReport, observed_at: now + 1, provider: { ...provider,
+  used_bytes: 2 * GB, quota_bytes: 2000 * GB, reset_at: now + 31 * 86400, observed_at: now + 1 } })).status, 200);
+usage = await accountUsage(db, env, ['dawn']);
+assert.equal(usage.shared.used_bytes, 2 * GB); assert.equal(usage.shared.remaining_bytes, 1998 * GB, 'Provider reset and plan upgrades replace the old snapshot');
+assert.equal((await send(providerReport)).status, 200);
+assert.equal((await accountUsage(db, env, ['dawn'])).shared.used_bytes, 2 * GB, 'Replayed prior-cycle reports cannot undo a reset');
+assert.equal((await accountUsage({ prepare() { throw Error('offline'); } }, env, ['dawn'])).shared.used_bytes, null);
 sql.close();
 console.log('Monthly usage: UTC periods, private scope, shared NIC pool, signed/idempotent reports and honest unknown states passed');

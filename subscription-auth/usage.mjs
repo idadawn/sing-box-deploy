@@ -51,11 +51,33 @@ export function ispUsage(db, env, id, period = usagePeriod()) {
   return aggregate(db, env, period, ['isp:' + id], 100 * GIB);
 }
 
+export async function providerUsage(db, env) {
+  const empty = { source: 'kiwivm', quota_bytes: null, upload_bytes: null, download_bytes: null,
+    used_bytes: null, remaining_bytes: null, status: 'unavailable', over_quota: false,
+    observed_at: null, started_at: null, reset_at: null };
+  try {
+    if (!/^[1-9][0-9]{0,11}$/.test(env.SUB_KIWIVM_VEID || '')) return empty;
+    const row = await db.prepare('SELECT used_bytes, quota_bytes, reset_at, observed_at FROM provider_usage WHERE provider=? AND service_id=?')
+      .bind('kiwivm', env.SUB_KIWIVM_VEID).first();
+    if (!row) return empty; // Never substitute a fresh natural-month zero.
+    const now = Math.floor(Date.now() / 1000);
+    const expired = row.reset_at <= now;
+    const stale = expired || row.observed_at < now - 300;
+    return { ...empty, ...row, status: stale ? 'stale' : 'current',
+      // KiwiVM provides a combined counter, not an upload/download breakdown.
+      // Standard subscription headers require two fields; their sum is authoritative.
+      upload_bytes: 0, download_bytes: row.used_bytes,
+      remaining_bytes: stale ? null : Math.max(0, row.quota_bytes - row.used_bytes),
+      over_quota: !expired && row.used_bytes >= row.quota_bytes };
+  } catch { return empty; }
+}
+
 export async function accountUsage(db, env, allowed) {
   const period = usagePeriod();
   const personal = await aggregate(db, env, period, allowed.filter(id => id !== 'tx').map(id => 'isp:' + id), 100 * GIB);
   // This is the public NIC total, not personal + direct counters. No double counting.
-  const shared = await aggregate(db, env, period, ['machine'], 1000 * GIB);
+  const shared = env.SUB_KIWIVM_VEID
+    ? await providerUsage(db, env) : await aggregate(db, env, period, ['machine'], 1000 * GIB);
   return { period, mode: 'notify_only', personal, shared };
 }
 
@@ -99,6 +121,22 @@ export async function ingestUsage(context, catalog) {
   const generation = await env.SUB_AUTH_DB.prepare('SELECT generation FROM usage_generations WHERE source=? AND period=?').bind(data.source, period.id).first();
   if (generation && generation.generation !== data.generation) return reply('Collector state changed; restore the original ledger', 409);
   const queries = [env.SUB_AUTH_DB.prepare('INSERT OR IGNORE INTO usage_generations VALUES(?,?,?)').bind(data.source, period.id, data.generation)];
+  if (data.provider !== undefined) {
+    const p = data.provider;
+    if (!p || p.name !== 'kiwivm' || !/^[1-9][0-9]{0,11}$/.test(env.SUB_KIWIVM_VEID || '') ||
+        p.service_id !== env.SUB_KIWIVM_VEID || data.source !== (env.SUB_KIWIVM_SOURCE || env.SUB_USAGE_SOURCE || 'la') ||
+        !integer(p.used_bytes) || !integer(p.quota_bytes) || p.quota_bytes === 0 ||
+        !integer(p.observed_at) || p.observed_at > data.observed_at ||
+        !integer(p.reset_at) || p.reset_at <= p.observed_at || p.reset_at > p.observed_at + 40 * 86400) return reply('Invalid provider snapshot', 400);
+    // Replace with the newest authoritative snapshot, including genuine resets,
+    // plan changes and provider corrections. Replays cannot restore an old cycle.
+    queries.push(env.SUB_AUTH_DB.prepare(`INSERT INTO provider_usage
+      SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM usage_generations WHERE source=? AND period=? AND generation=?)
+      ON CONFLICT(provider, service_id) DO UPDATE SET used_bytes=excluded.used_bytes,
+      quota_bytes=excluded.quota_bytes, reset_at=excluded.reset_at, observed_at=excluded.observed_at
+      WHERE excluded.observed_at > provider_usage.observed_at`)
+      .bind(p.name, p.service_id, p.used_bytes, p.quota_bytes, p.reset_at, p.observed_at, data.source, period.id, data.generation));
+  }
   for (const c of data.counters) {
     if (!c || !allowed.has(c.meter) || seen.has(c.meter) || !integer(c.upload_bytes) || !integer(c.download_bytes) ||
       !integer(c.upload_bytes + c.download_bytes) || !integer(c.observed_at) || c.observed_at > data.observed_at || c.observed_at < period.start ||
@@ -128,8 +166,10 @@ export function withUsageHeaders(response, usage, { homepage } = {}) {
   headers.set('X-Subscription-Usage-Status', usage.status);
   if (Number.isSafeInteger(usage.started_at)) headers.set('X-Subscription-Usage-Started-At', String(usage.started_at));
   if (Number.isSafeInteger(usage.observed_at)) headers.set('X-Subscription-Usage-Updated-At', String(usage.observed_at));
+  if (usage.source) headers.set('X-Subscription-Usage-Source', usage.source);
+  if (Number.isSafeInteger(usage.reset_at)) headers.set('X-Subscription-Usage-Reset-At', String(usage.reset_at));
   if (homepage) headers.set('Profile-Web-Page-URL', homepage);
-  if (response.ok && !measured) {
+  if (response.ok && (!measured || (usage.source === 'kiwivm' && usage.reset_at <= Date.now() / 1000))) {
     // A database failure is not an empty month. Reject the refresh so clients
     // retain their previous configuration and known usage instead of resetting it.
     return new Response('流量数据暂不可用，请稍后更新订阅', { status: 503 });

@@ -1,5 +1,19 @@
 # 流量额度与计量
 
+## KiwiVM 公共套餐（gw 当前模式）
+
+公共套餐用量、总额度和下次重置时间直接来自 KiwiVM `getServiceInfo` 的 `data_counter`、`plan_monthly_data`、`data_next_reset`；前两项按 API 的 `monthly_data_multiplier` 换算。网页按 1024 进位显示 GB，与 KiwiVM 面板核对。公共余量不再用自然月网卡计数计算，个人 ISP 的 100 GB 仍按 UTC 自然月统计。
+
+采集器每分钟查询供应商，只调用只读 `getServiceInfo`。服务器私有采集配置增加 `kiwivm: {"veid":"你的服务 ID","key_file":"/etc/subscription-meter-gw/kiwivm.key"}`，密钥文件必须为 0600。密钥不进入 Git、订阅、网页、D1 或报告；请求使用 HTTPS POST，禁止重定向。Pages 配置 `SUB_KIWIVM_VEID` 和 `SUB_KIWIVM_SOURCE`，仅允许指定采集源上报该服务。部署前应用 `schema.sql` 新增 `provider_usage` 表。
+
+D1 独立保存供应商快照，不修改原有月账本。新快照按采集时间覆盖旧值，支持套餐升级、供应商修正和真实账期清零；重复及乱序上报不会恢复旧账期。无数据或查询异常显示待同步，不回退到自然月 0/1000 GB。超过 5 分钟未更新则保留上次已用量、隐藏失效的剩余额度；到重置时间后等待供应商确认新账期，不自行清零。
+
+公共直出和管理员汇总订阅的流量条采用同一快照。标准订阅头只有上传/下载字段，因此以 `upload=0; download=供应商总已用` 携带总量，不代表真实下载拆分；`expire` 仍是订阅到期日期，不拿流量重置日期冒充到期。额外头 `X-Subscription-Usage-Source: kiwivm` 和 `X-Subscription-Usage-Reset-At` 标明来源和重置时间。没有可用快照或旧账期已结束时返回 503，让客户端保留旧配置。
+
+网站不执行停机或限速；搬瓦工可能在公共套餐耗尽后暂停服务，页面不会承诺公共套餐超额不停用。迁移新机器时不复制旧机 KiwiVM 配置/密钥，需按新供应商重新对接套餐。
+
+以下自然月公共网卡额度是未配置 KiwiVM 时的旧内部额度模式，不代表搬瓦工套餐余量；网卡账本继续用于诊断。
+
 ## 已确认规则
 
 | 项目 | 规则 |

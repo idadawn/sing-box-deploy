@@ -5,6 +5,7 @@ Never edits active sing-box/firewall configuration, resets counters, or blocks u
 """
 import argparse
 import datetime
+from decimal import Decimal, InvalidOperation
 import fcntl
 import hashlib
 import hmac
@@ -42,7 +43,7 @@ def open_state(path):
     return db
 
 
-def record_sample(db, source, at, counters):
+def record_sample(db, source, at, counters, provider=None):
     """Cumulative raw values; first sample establishes a baseline, not past usage."""
     period, start = period_at(at)
     with db:
@@ -88,6 +89,12 @@ def record_sample(db, source, at, counters):
         report = {'source': source, 'generation': generation, 'period': period, 'sequence': sequence, 'observed_at': at, 'counters': [
             {'meter': r['meter'], 'upload_bytes': r['up'], 'download_bytes': r['down'],
              'started_at': r['started'], 'observed_at': r['observed'], 'has_gap': bool(r['gap'])} for r in rows]}
+        if provider is None:
+            pending = db.execute('SELECT body FROM outbox WHERE period=?', (period,)).fetchone()
+            if pending:
+                provider = json.loads(pending['body']).get('provider')
+        if provider is not None:
+            report['provider'] = provider
         # Coalesce unsent snapshots per month. Cumulative values preserve all bytes.
         db.execute('INSERT OR REPLACE INTO outbox VALUES(?,?,?)',
                    (period, sequence, json.dumps(report, separators=(',', ':'))))
@@ -99,6 +106,64 @@ def network_sample(interface):
     directory = Path('/sys/class/net') / interface / 'statistics'
     epoch = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     return (int((directory / 'tx_bytes').read_text()), int((directory / 'rx_bytes').read_text()), epoch)
+
+
+def normalize_kiwivm(data, service_id, at):
+    """Only provider counters define the shared plan; never infer its reset day."""
+    if not isinstance(data, dict) or data.get('error') != 0:
+        raise ValueError('KiwiVM query failed')
+    def number(key):
+        value = data.get(key)
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ValueError('Invalid KiwiVM field')
+        try:
+            value = Decimal(str(value))
+        except InvalidOperation:
+            raise ValueError('Invalid KiwiVM field') from None
+        if not value.is_finite() or value < 0:
+            raise ValueError('Invalid KiwiVM field')
+        return value
+    multiplier = number('monthly_data_multiplier')
+    if multiplier <= 0:
+        raise ValueError('Invalid KiwiVM multiplier')
+    def integer(value):
+        if value != value.to_integral_value() or value > 2**53 - 1:
+            raise ValueError('Invalid KiwiVM integer')
+        return int(value)
+    used = integer(number('data_counter') * multiplier)
+    quota = integer(number('plan_monthly_data') * multiplier)
+    reset = integer(number('data_next_reset'))
+    if quota <= 0 or not at < reset <= at + 40 * 86400:
+        raise ValueError('Invalid KiwiVM billing cycle')
+    return {'name': 'kiwivm', 'service_id': service_id, 'used_bytes': used,
+            'quota_bytes': quota, 'reset_at': reset, 'observed_at': at}
+
+
+def kiwivm_sample(config):
+    provider = config.get('kiwivm')
+    if not provider:
+        return None
+    service_id = provider['veid']
+    if not isinstance(service_id, str) or not re.fullmatch(r'[1-9][0-9]{0,11}', service_id):
+        raise ValueError('Invalid KiwiVM service')
+    key_path = Path(provider['key_file'])
+    if key_path.stat().st_mode & 0o077:
+        raise ValueError('KiwiVM key must be private (0600)')
+    key = key_path.read_text().strip()
+    if not key or len(key) > 512 or any(c.isspace() for c in key):
+        raise ValueError('Invalid KiwiVM key')
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args):
+            return None
+    request = urllib.request.Request('https://api.64clouds.com/v1/getServiceInfo',
+        data=urllib.parse.urlencode({'veid': service_id, 'api_key': key}).encode(),
+        headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'SubscriptionMeter/1.0'}, method='POST')
+    with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
+        raw = response.read(65537)
+        if len(raw) > 65536:
+            raise ValueError('Oversized KiwiVM response')
+        data = json.loads(raw)
+    return normalize_kiwivm(data, service_id, int(time.time()))
 
 
 def loopback_address(address):
@@ -228,7 +293,14 @@ def main():
         db = open_state(state)
         try:
             counters, unavailable = sample()
-            record_sample(db, config.get('source', 'la'), int(time.time()), counters)
+            provider = None
+            try:
+                provider = kiwivm_sample(config)
+            except (ValueError, KeyError, OSError):
+                # Retain the provider's previous snapshot and original timestamp.
+                # Provider downtime must not interrupt personal/NIC accounting.
+                unavailable.append('kiwivm')
+            record_sample(db, config.get('source', 'la'), int(time.time()), counters, provider)
             sent = send_pending(db, config)
             print(json.dumps({'reports_sent': sent, 'unavailable': unavailable}))
         finally:
