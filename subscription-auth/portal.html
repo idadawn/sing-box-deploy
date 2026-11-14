@@ -12,7 +12,7 @@
 </head>
 <body>
   <main>
-    <header><a class="brand" href="/">自由翱翔<span>个人办公空间</span></a><span class="badge">个人空间</span></header>
+    <header><a class="brand" href="/">自由翱翔<span>个人办公空间</span></a><span id="pageBadge" class="badge">个人空间</span></header>
     <p id="message" role="status" aria-live="polite"></p>
     <section id="loginView" class="login panel" hidden>
       <h1>登录</h1>
@@ -33,10 +33,9 @@
       </form>
     </section>
     <section id="accountView" hidden>
-      <div class="heading"><div><p class="eyebrow" id="accountName"></p><h1 id="linesHeading">我的线路</h1></div><div class="account-actions"><button id="refreshUsage" class="quiet">刷新用量</button><button id="logout" class="quiet">退出登录</button></div></div>
+      <div class="heading"><div><p class="eyebrow" id="accountName"></p><h1 id="linesHeading">我的线路</h1></div><div class="account-actions"><a id="adminLink" class="admin-link" href="#admin" hidden>流量后台</a><button id="refreshUsage" class="quiet">刷新用量</button><button id="logout" class="quiet">退出登录</button></div></div>
       <p id="quotaAlert" class="quota-alert" role="status" hidden></p>
-      <section id="personalUsage" class="panel account-total" hidden></section>
-      <section id="accountOverview" class="panel account-overview" hidden></section>
+      <div class="home-usage"><section id="personalUsage" class="panel"></section><section id="sharedUsage" class="panel"></section></div>
       <div id="entries" class="entries"></div>
       <p id="billingCycle" class="hint billing-cycle"></p>
       <details class="usage-help"><summary>使用帮助</summary><p class="hint">v2rayNG 用于 Android，Shadowrocket 用于 iPhone / iPad。未唤起时，可复制链接手动添加。导入后在客户端更新订阅，退出网页登录不影响更新。</p></details>
@@ -48,6 +47,13 @@
         </form></details>
         <details><summary>重置专属订阅链接</summary><p class="muted">重置后旧链接立即失效。你需要在所有客户端中替换订阅链接。</p><button id="rotate" class="danger">确认重置链接</button></details>
       </section>
+    </section>
+    <section id="adminView" hidden>
+      <div class="heading"><div><p class="eyebrow">管理员</p><h1>流量后台</h1></div><div class="account-actions"><button id="backToAccount" class="quiet">返回个人页</button><button id="refreshAdmin" class="quiet">刷新后台</button></div></div>
+      <div class="admin-controls"><label for="adminAccount">查询账号<select id="adminAccount"><option value="">全部账号</option></select></label></div>
+      <section id="adminAccountDetail" class="panel account-total" hidden></section>
+      <section id="accountOverview" class="panel account-overview"></section>
+      <section id="adminSharedUsage" class="panel"></section>
     </section>
     <footer>自由翱翔 · 专注个人办公</footer>
   </main>
