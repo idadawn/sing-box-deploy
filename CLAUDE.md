@@ -62,7 +62,7 @@ Each ISP row produces:
 - `isp-out-<id>`
 - `<UPPERCASE-ID>-TJ` and `<UPPERCASE-ID>-HY2`; internal IDs, credentials and routing stay unchanged.
 
-The optional portal tracks 100 GB per-account ISP quota within a shared 1000 GB public-NIC quota. Periods reset at 00:00 UTC on the first day of each month. It is notify-only: never stop users, block subscriptions or change routing for quota exhaustion. Unknown/partial telemetry must never be advertised as a complete zero reading. See `metering/README.md`; live metering requires a separately approved setup.
+The portal tracks 100 GB per-account ISP quota by UTC calendar month. With SUB_KIWIVM_VEID configured (current gw deployment), shared usage/quota/reset come exclusively from KiwiVM, never the natural-month NIC ledger. Provider outages retain the last snapshot with its original timestamp; unknown/stale remaining allowance must not appear current. Unconfigured legacy deployments use an internal 1000 GB public-NIC quota. The portal never stops users or changes routing for quota exhaustion, but must not promise that the provider will keep an exhausted VPS running. See `metering/README.md`.
 - `/v2?isp=<id>` and `/c?isp=<id>`
 
 ## Performance contract

@@ -15,7 +15,7 @@ try {
     Object.fromEntries(['trojan', 'hysteria', 'obfs'].map(type => [type, `runtime-${id}-${type}-`.padEnd(40, 'x')]))]));
   const credentialsFile = resolve(directory, 'private-credentials.json');
   writeFileSync(credentialsFile, JSON.stringify(credentials), { mode: 0o600 });
-  await buildFixture(directory, { SUB_AUTH_ISP_CREDENTIALS_FILE: credentialsFile, SUB_ADMIN_USERS: 'dawn', SUB_USAGE_EXTRA_SOURCES: 'dmit' });
+  await buildFixture(directory, { SUB_AUTH_ISP_CREDENTIALS_FILE: credentialsFile, SUB_ADMIN_USERS: 'dawn', SUB_USAGE_EXTRA_SOURCES: 'dmit', SUB_KIWIVM_VEID: '123' });
   rmSync(credentialsFile);
   const migrated = spawnSync(wrangler, ['d1', 'execute', 'SUB_AUTH_DB', '--local', '--file=fixture.sql'], { cwd: directory, encoding: 'utf8', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
   assert.equal(migrated.status, 0, migrated.stderr);
@@ -40,10 +40,11 @@ try {
   const firstCookie = firstLogin.headers.get('Set-Cookie').split(';')[0];
   const firstMonth = await (await request('/api/me', firstCookie)).json();
   assert.equal(firstMonth.usage.personal.used_bytes, 0);
-  assert.equal(firstMonth.usage.shared.used_bytes, 0);
+  assert.equal(firstMonth.usage.shared.used_bytes, null);
+  assert.equal((await request(firstMonth.entries.find(e => e.id === 'tx').clash)).status, 503);
   assert.equal(firstMonth.usage.personal.status, 'initialized');
   assert.equal(firstMonth.usage.personal.quota_bytes / 1024 ** 3, 100, 'Client card denominator must render as 100 GB');
-  assert.equal(firstMonth.usage.shared.quota_bytes / 1024 ** 3, 1000, 'Shared denominator must render as 1000 GB');
+  assert.equal(firstMonth.usage.shared.quota_bytes, null, 'Unknown provider quota must not become a fake 1000 GB allowance');
   const firstSubscription = await request(firstMonth.entries[0].clash);
   assert.equal(firstSubscription.headers.get('Subscription-Userinfo'), 'upload=0; download=0; total=107374182400; expire=0');
   assert.equal(firstSubscription.headers.get('X-Subscription-Usage-Status'), 'initialized');
@@ -52,6 +53,7 @@ try {
   const started = Date.parse(period + '-01T00:00:00Z') / 1000;
   const meterKey = readFileSync(resolve(directory, '.dev.vars'), 'utf8').match(/^SUB_METER_KEY=(.+)$/m)[1];
   const report = JSON.stringify({ source: 'la', generation: '0123456789abcdef0123456789abcdef', period, sequence: 1, observed_at: observed,
+    provider: { name: 'kiwivm', service_id: '123', used_bytes: 969 * 1024 ** 3, quota_bytes: 1000 * 1024 ** 3, reset_at: observed + 3 * 86400, observed_at: observed },
     counters: ['machine', 'isp:dawn', 'isp:zw', 'isp:gj', 'isp:crj'].map(meter => ({ meter,
       upload_bytes: meter === 'machine' ? 500e9 : 60e9, download_bytes: meter === 'machine' ? 600e9 : 50e9,
       started_at: observed, observed_at: observed, has_gap: true })) });
@@ -67,9 +69,11 @@ try {
     const me = await (await request('/api/me', cookie)).json();
     assert.deepEqual(me.entries.map(e => e.id), username === 'dawn' ? ['dawn', 'zw', 'gj', 'crj', 'tx'] : [username, 'tx']);
     assert.equal(me.is_admin, username === 'dawn');
-    for (const entry of me.entries) assert.equal(entry.usage.used_bytes, entry.id === 'tx' ? 1100e9 : 110e9);
+    for (const entry of me.entries) assert.equal(entry.usage.used_bytes, entry.id === 'tx' ? 969 * 1024 ** 3 : 110e9);
     assert.equal(me.usage.personal.used_bytes, 110e9);
-    assert.equal(me.usage.shared.used_bytes, 1100e9);
+    assert.equal(me.usage.shared.used_bytes, 969 * 1024 ** 3);
+    assert.equal(me.usage.shared.remaining_bytes, 31 * 1024 ** 3);
+    assert.equal(me.usage.shared.reset_at, observed + 3 * 86400);
     assert.equal(me.usage.personal.over_quota, true);
     assert.equal(me.usage.mode, 'notify_only');
     assert.equal(me.usage.personal.status, 'partial');
@@ -86,7 +90,8 @@ try {
         assert.match(response.headers.get('Cache-Control'), /no-store/);
         if (field !== 'extension') {
           assert.equal(response.headers.get('Profile-Update-Interval'), '24');
-          assert.equal(response.headers.get('X-Subscription-Usage-Status'), 'partial');
+          assert.equal(response.headers.get('X-Subscription-Usage-Status'), entry.id === 'tx' ? 'current' : 'partial');
+          if (entry.id === 'tx') assert.equal(response.headers.get('X-Subscription-Usage-Reset-At'), String(observed + 3 * 86400));
           assert.equal(response.headers.get('Profile-Web-Page-URL'), origin + '/');
           assert.match(response.headers.get('Subscription-Userinfo'), /total=(107374182400|1073741824000);/);
           if (username === 'dawn') savedLinks.push({ url: entry[field], field, direct: entry.id === 'tx' });
@@ -145,7 +150,7 @@ try {
   assert.ok(module.includes('RULE-SET,' + origin + '/rules/shadowrocket-telegram.list,PROXY'));
   assert.ok(!module.includes('trojan://') && !module.includes('hysteria2://'));
   // Parallel target has a fresh ledger identity. Retries cannot duplicate usage.
-  const second = JSON.stringify({ ...JSON.parse(report), source: 'dmit', generation: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  const second = JSON.stringify({ ...JSON.parse(report), source: 'dmit', provider: undefined, generation: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     counters: JSON.parse(report).counters.map(c => ({ ...c, upload_bytes: 1024, download_bytes: 2048 })) });
   const secondSignature = createHmac('sha256', meterKey).update(observed + '.' + second).digest('hex');
   for (let i = 0; i < 2; i++) {

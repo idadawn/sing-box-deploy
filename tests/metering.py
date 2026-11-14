@@ -120,6 +120,47 @@ class MeteringTests(unittest.TestCase):
             self.assertEqual(collector.send_pending(self.db, config), 1)
         self.assertEqual(self.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0], 0)
 
+    def test_provider_counter_multiplier_and_cycle(self):
+        data = {'error': 0, 'plan_monthly_data': '1000', 'data_counter': '969',
+                'monthly_data_multiplier': '0.5', 'data_next_reset': self.at + 17 * 86400}
+        # Byte counts must remain exact after applying the provider's multiplier.
+        with self.assertRaises(ValueError):
+            collector.normalize_kiwivm(data, '123', self.at)
+        data['data_counter'] = '968'
+        sample = collector.normalize_kiwivm(data, '123', self.at)
+        self.assertEqual((sample['used_bytes'], sample['quota_bytes']), (484, 500))
+        self.assertEqual(sample['reset_at'], data['data_next_reset'])
+        for field, bad in [('error', 1), ('monthly_data_multiplier', 0), ('monthly_data_multiplier', 'NaN'),
+                           ('data_counter', -1), ('data_counter', True), ('plan_monthly_data', 0),
+                           ('data_next_reset', self.at), ('data_counter', 2**54)]:
+            with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                collector.normalize_kiwivm({**data, field: bad}, '123', self.at)
+
+    def test_provider_failure_keeps_pending_snapshot_without_refreshing_it(self):
+        provider = {'name': 'kiwivm', 'service_id': '123', 'used_bytes': 969,
+                    'quota_bytes': 1000, 'reset_at': self.at + 17 * 86400, 'observed_at': self.at}
+        collector.record_sample(self.db, 'la', self.at, {'machine': (1, 2, 'boot')}, provider)
+        self.sample(self.at + 60, 101, 202, 'boot')
+        self.assertEqual(self.report()['provider'], provider)
+        self.assertEqual(self.report()['counters'][0]['upload_bytes'], 100)
+
+    def test_provider_request_uses_private_key_and_fixed_read_only_endpoint(self):
+        key = Path(self.temp.name) / 'api.key'; key.write_text('fixture-api-key'); key.chmod(0o600)
+        data = {'error': 0, 'plan_monthly_data': 1000, 'data_counter': 969,
+                'monthly_data_multiplier': 1, 'data_next_reset': self.at + 17 * 86400}
+        config = {'kiwivm': {'veid': '123', 'key_file': str(key)}}
+        with mock.patch.object(collector.urllib.request, 'build_opener') as opener, mock.patch.object(collector.time, 'time', return_value=self.at):
+            opener.return_value.open.return_value = io.BytesIO(json.dumps(data).encode())
+            self.assertEqual(collector.kiwivm_sample(config)['used_bytes'], 969)
+            request = opener.return_value.open.call_args[0][0]
+            self.assertEqual(request.full_url, 'https://api.64clouds.com/v1/getServiceInfo')
+            self.assertEqual(request.method, 'POST')
+            self.assertNotIn('fixture-api-key', request.full_url)
+            self.assertIn(b'api_key=fixture-api-key', request.data)
+        key.chmod(0o644)
+        with self.assertRaises(ValueError):
+            collector.kiwivm_sample(config)
+
 
 if __name__ == '__main__':
     unittest.main()

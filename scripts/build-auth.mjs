@@ -72,7 +72,10 @@ export function buildAuth(directory, env = process.env) {
   const { sources, active } = usageSources(env);
   const source = sources[0];
   if (!/^[a-z0-9-]{1,40}$/.test(source)) throw new Error('Invalid usage source');
-  writeFileSync(resolve(directory, 'wrangler.toml'), `name = "${project}"\ncompatibility_date = "2025-01-01"\npages_build_output_dir = "."\n\n[vars]\nSUB_USAGE_SOURCE = "${source}"\nSUB_USAGE_EXTRA_SOURCES = "${sources.slice(1).join(',')}"\nSUB_USAGE_INACTIVE_SOURCES = "${sources.filter(s => !active.includes(s)).join(',')}"\nSUB_ADMIN_USERS = "${admins.join(',')}"\n\n[[d1_databases]]\nbinding = "SUB_AUTH_DB"\ndatabase_name = "subscription-auth"\ndatabase_id = "${env.SUB_AUTH_D1_ID}"\n`);
+  const veid = env.SUB_KIWIVM_VEID || '';
+  const providerSource = env.SUB_KIWIVM_SOURCE || source;
+  if (veid && (!/^[1-9][0-9]{0,11}$/.test(veid) || !sources.includes(providerSource))) throw new Error('Invalid KiwiVM source');
+  writeFileSync(resolve(directory, 'wrangler.toml'), `name = "${project}"\ncompatibility_date = "2025-01-01"\npages_build_output_dir = "."\n\n[vars]\nSUB_USAGE_SOURCE = "${source}"\nSUB_USAGE_EXTRA_SOURCES = "${sources.slice(1).join(',')}"\nSUB_USAGE_INACTIVE_SOURCES = "${sources.filter(s => !active.includes(s)).join(',')}"\nSUB_ADMIN_USERS = "${admins.join(',')}"\nSUB_KIWIVM_VEID = "${veid}"\nSUB_KIWIVM_SOURCE = "${providerSource}"\n\n[[d1_databases]]\nbinding = "SUB_AUTH_DB"\ndatabase_name = "subscription-auth"\ndatabase_id = "${env.SUB_AUTH_D1_ID}"\n`);
   return true;
 }
 

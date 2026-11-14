@@ -50,9 +50,10 @@ function importActions(entry) {
 function usageSummary(usage, direct) {
   const box = document.createElement('div'); box.className = 'usage-summary';
   const label = document.createElement('p'), value = document.createElement('p'), status = document.createElement('span');
-  label.className = 'hint'; label.textContent = direct ? '公共流量 · 整机共用' : '个人流量';
+  const provider = direct && usage?.source === 'kiwivm';
+  label.className = 'hint'; label.textContent = provider ? '公共套餐流量 · KiwiVM' : direct ? '公共流量 · 整机共用' : '个人流量';
   value.className = 'usage-value';
-  const limit = (usage?.quota_bytes || (direct ? 1000 : 100) * GIB) / GIB;
+  const limit = usage?.quota_bytes == null ? '—' : (usage.quota_bytes / GIB).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
   const known = usage?.used_bytes !== null && usage?.used_bytes !== undefined;
   const bytes = usage?.used_bytes;
   const [scale, unit] = bytes >= GIB ? [GIB, 'GB'] : bytes >= MIB ? [MIB, 'MB'] : bytes >= KIB ? [KIB, 'KB'] : [1, 'B'];
@@ -60,8 +61,20 @@ function usageSummary(usage, direct) {
   value.textContent = used + ' / ' + limit + ' GB';
   const labels = { initialized: '本月已用', not_connected: '待接入', unavailable: '暂不可用', partial: '部分统计', stale: '待同步', current: '本月已用' };
   status.textContent = usage?.over_quota ? '已超额' : labels[usage?.status || 'not_connected'];
+  if (provider) status.textContent = usage.status === 'current' ? (usage.over_quota ? '套餐流量已用尽' : '本账期已用') : usage.status === 'stale' ? '上次同步用量 · 待同步' : '等待 KiwiVM 数据';
   status.className = 'usage-status' + (usage?.over_quota ? ' over' : '');
   box.append(label, value, status);
+  if (provider) {
+    const remaining = document.createElement('p'), reset = document.createElement('p'), updated = document.createElement('p');
+    remaining.className = 'usage-remaining';
+    remaining.textContent = usage.remaining_bytes == null ? '剩余额度待同步' : '剩余 ' + (usage.remaining_bytes / GIB).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' GB';
+    reset.className = updated.className = 'usage-status';
+    const date = seconds => new Date(seconds * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+    reset.textContent = usage.reset_at ? '下次重置：' + date(usage.reset_at) + '（北京时间）' : '重置时间待同步';
+    if (usage.reset_at && usage.reset_at <= Date.now() / 1000) reset.textContent = '已到重置时间，等待 KiwiVM 确认新账期';
+    updated.textContent = usage.observed_at ? '同步于 ' + date(usage.observed_at) + '（北京时间）' : '用量、额度和账期均以 KiwiVM 为准';
+    box.append(remaining, reset, updated);
+  }
   return box;
 }
 async function load() {
@@ -92,7 +105,10 @@ async function load() {
   }));
   const over = [data.usage?.personal?.over_quota ? '个人流量' : null, data.usage?.shared?.over_quota ? '公共流量' : null].filter(Boolean);
   $('quotaAlert').hidden = !over.length;
-  $('quotaAlert').textContent = over.length ? over.join('、') + '已超额，当前仅提醒，不停用。' : '';
+  $('quotaAlert').textContent = over.length ? over.join('、') + '已超额。个人额度仅提醒；公共套餐耗尽可能由供应商暂停服务。' : '';
+  $('billingCycle').textContent = data.usage?.shared?.source === 'kiwivm'
+    ? '公共套餐用量、额度与重置时间以 KiwiVM 为准；个人 ISP 仍按每月 1 日 00:00 UTC 统计。'
+    : '每月 1 日 00:00 UTC 重置 · 个人用量包含在整机公共额度内';
   view('accountView');
 }
 async function action(button, task) {

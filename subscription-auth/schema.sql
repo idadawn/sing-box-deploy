@@ -40,3 +40,13 @@ CREATE TABLE IF NOT EXISTS usage_generations (
   generation TEXT NOT NULL,
   PRIMARY KEY(source, period)
 );
+-- Provider snapshots are independent of the personal UTC-month ledger.
+CREATE TABLE IF NOT EXISTS provider_usage (
+  provider TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  used_bytes INTEGER NOT NULL CHECK(used_bytes >= 0),
+  quota_bytes INTEGER NOT NULL CHECK(quota_bytes > 0),
+  reset_at INTEGER NOT NULL,
+  observed_at INTEGER NOT NULL,
+  PRIMARY KEY(provider, service_id)
+);
