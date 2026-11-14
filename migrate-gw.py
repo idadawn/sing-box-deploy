@@ -190,7 +190,7 @@ def main():
             target = target_status(state)
             require(target['machine'] == state['target_machine'], 'Target host changed')
             # Append current collector source/proto to the sealed runtime snapshot.
-            for name in ('collector.py', 'stats.proto'):
+            for name in ('collector.py', 'accounts.py', 'stats.proto'):
                 files[name] = (ROOT / 'metering' / name).read_bytes()
                 manifest['sha256'][name] = digest(files[name])
             files['manifest.json'] = json.dumps(manifest).encode()

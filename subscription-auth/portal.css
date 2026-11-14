@@ -25,6 +25,12 @@
 .usage-status { font-size: 12px; color: var(--muted); }
 .usage-remaining { margin: 12px 0 8px; font-weight: 600; }
 .usage-summary p.usage-status { margin: 5px 0 0; line-height: 1.5; }
+.account-total, .account-overview { margin-bottom: 24px; }
+.account-total .usage-summary { margin-top: 0; }
+.usage-table { overflow-x: auto; }
+.usage-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.usage-table th, .usage-table td { padding: 12px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.usage-table th { color: var(--muted); font-weight: 500; }
 .usage-status.over, .quota-alert { color: #ffc28f; }
 .quota-alert { padding: 12px 16px; border: 1px solid #695039; border-radius: 10px; background: #302519; }
 .subscription-details { margin-top: 0; }

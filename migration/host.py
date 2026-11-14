@@ -149,6 +149,7 @@ def check_certs(config, files, manifest):
 
 def install(files, manifest, options):
     require(os.geteuid() == 0 and platform.system() == 'Linux', 'Target needs Linux and passwordless sudo')
+    require(not json.loads(files['meter.json']).get('account_users'), 'Account-metered migration needs an explicit target provider/cycle setup; refusing to drop account accounting')
     current = status()
     require(current['machine'] != manifest['source']['machine'], 'Source and target are the same host')
     require(current['arch'] == manifest['source']['arch'], 'Target CPU architecture differs')
@@ -197,7 +198,7 @@ def install(files, manifest, options):
     for path, name in ((BINARY, 'sing-box'), (Path('/opt/subscription-meter-gw/grpcurl'), 'grpcurl')):
         private_write(path, files[name], 0o755)
         os.chmod(path.parent, 0o755)
-    for name in ('collector.py', 'stats.proto'):
+    for name in ('collector.py', 'accounts.py', 'stats.proto'):
         private_write('/opt/subscription-meter-gw/' + name, files[name])
     private_write('/etc/subscription-meter-gw/report.key', files['report.key'])
     meter = json.loads(files['meter.json'])

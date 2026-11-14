@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
-import { accountUsage, ingestUsage, usagePeriod, withUsageHeaders } from '../subscription-auth/usage.mjs';
+import { accountUsage, ingestUsage, usagePeriod, withUsageHeaders, billingOverview } from '../subscription-auth/usage.mjs';
 
 const sql = new DatabaseSync(':memory:');
 sql.exec(readFileSync(new URL('../subscription-auth/schema.sql', import.meta.url), 'utf8'));
@@ -159,5 +159,34 @@ assert.equal(usage.shared.used_bytes, 2 * GB); assert.equal(usage.shared.remaini
 assert.equal((await send(providerReport)).status, 200);
 assert.equal((await accountUsage(db, env, ['dawn'])).shared.used_bytes, 2 * GB, 'Replayed prior-cycle reports cannot undo a reset');
 assert.equal((await accountUsage({ prepare() { throw Error('offline'); } }, env, ['dawn'])).shared.used_bytes, null);
+// Per-account payloads share the supplier cycle, independently of UTC months.
+env.SUB_ACCOUNT_USAGE_ENABLED = 'true'; env.SUB_USAGE_EXTRA_SOURCES = '';
+for (const name of ['dawn', 'zw']) sql.prepare('INSERT INTO users(username,scopes,token_version,created_at) VALUES(?,?,?,?)').run(name, JSON.stringify([name, 'tx']), 'fixture', now);
+const accountEnd = now + 31 * 86400;
+const accountReport = { ...initial, account_usage: { service_id: '123', reset_at: accountEnd, start_at: null,
+  counters: [{ account: 'dawn', upload_bytes: 10 * GB, download_bytes: 20 * GB, started_at: now - 60, observed_at: now, has_gap: true },
+    { account: 'zw', upload_bytes: GB, download_bytes: 2 * GB, started_at: now - 60, observed_at: now, has_gap: true },
+    { account: '__legacy__', upload_bytes: 3 * GB, download_bytes: 4 * GB, started_at: now - 60, observed_at: now, has_gap: true }] } };
+assert.equal((await send(accountReport)).status, 200);
+assert.equal((await send(accountReport)).status, 200);
+usage = await accountUsage(db, env, ['dawn', 'tx'], 'dawn');
+assert.equal(usage.personal.used_bytes, 30 * GB); assert.equal(usage.personal.reset_at, accountEnd);
+assert.equal(usage.personal.remaining_bytes, null, 'Incomplete history must not advertise full remaining quota');
+assert.equal(usage.personal.status, 'partial'); assert.equal(usage.account_mode, true);
+assert.equal(usage.period.end, accountEnd); assert.equal(usage.period.start, null);
+assert.equal((await accountUsage(db, env, ['dawn', 'zw', 'tx'], 'dawn')).personal.used_bytes, 30 * GB, 'Admin access never merges another account into personal use');
+assert.equal((await accountUsage(db, env, ['zw', 'tx'], 'zw')).personal.used_bytes, 3 * GB);
+const overview = await billingOverview(db, env, usage.shared);
+assert.equal(overview.accounts.length, 2); assert.equal(overview.legacy.used_bytes, 7 * GB);
+const invalidAccount = { ...accountReport, account_usage: { ...accountReport.account_usage, counters: [{ ...accountReport.account_usage.counters[0], account: 'outsider' }] } };
+assert.equal((await send(invalidAccount)).status, 400);
+assert.equal((await send({ ...accountReport, generation: 'cccccccccccccccccccccccccccccccc' })).status, 409);
+assert.equal((await send({ ...accountReport, account_usage: { ...accountReport.account_usage,
+  counters: [{ ...accountReport.account_usage.counters[0], upload_bytes: 1, download_bytes: 1, observed_at: now - 1 }] } })).status, 200);
+assert.equal((await accountUsage(db, env, ['dawn'], 'dawn')).personal.used_bytes, 30 * GB, 'Replays cannot reduce a known account total');
+sql.prepare('UPDATE account_usage SET observed_at=? WHERE account=?').run(now - 601, 'dawn');
+assert.equal((await accountUsage(db, env, ['dawn'], 'dawn')).personal.status, 'stale');
+sql.prepare('UPDATE provider_usage SET reset_at=?').run(now - 1);
+assert.equal((await accountUsage(db, env, ['dawn'], 'dawn')).personal.used_bytes, null, 'No fabricated zero when supplier and account snapshots have not aligned');
 sql.close();
 console.log('Monthly usage: UTC periods, private scope, shared NIC pool, signed/idempotent reports and honest unknown states passed');

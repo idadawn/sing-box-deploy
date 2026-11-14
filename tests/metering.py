@@ -161,6 +161,70 @@ class MeteringTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             collector.kiwivm_sample(config)
 
+    def test_account_billing_reset_and_provider_outage(self):
+        end = self.at + 16 * 86400
+        def sample(at, up, down, reset=None, epoch='process'):
+            p = {'name': 'kiwivm', 'service_id': '123', 'reset_at': reset, 'observed_at': at,
+                 'used_bytes': 900, 'quota_bytes': 1000} if reset else None
+            collector.record_sample(self.db, 'la', at, {'machine': (1, 2, 'boot')}, p,
+                                    {'alice': (up, down, epoch), '__legacy__': (0, 0, epoch)}, '123')
+        sample(self.at, 100, 100, end)
+        self.assertTrue(self.report()['account_usage']['counters'][1]['has_gap'])
+        sample(end - 30, 250, 300, end)
+        old = self.report()['account_usage']
+        self.assertEqual(old['reset_at'], end)
+        sample(end + 30, 400, 500)  # Keep evidence while the next reset is unknown.
+        self.assertNotIn('account_usage', self.report())
+        pending = json.loads(self.db.execute('SELECT body FROM account_outbox').fetchone()[0])
+        self.assertEqual(pending['account_usage'], old, 'Do not lose an undelivered previous-cycle snapshot')
+        sample(end + 90, 500, 700, end + 31 * 86400)
+        cycle = self.report()['account_usage']; row = next(c for c in cycle['counters'] if c['account'] == 'alice')
+        self.assertEqual(cycle['start_at'], end)
+        self.assertEqual((row['upload_bytes'], row['download_bytes']), (250, 400))
+        self.assertFalse(row['has_gap'])
+        # Natural-month boundaries never reset the provider's account window.
+        sample(self.at + 32 * 86400, 700, 900, end + 31 * 86400)
+        row = next(c for c in self.report()['account_usage']['counters'] if c['account'] == 'alice')
+        self.assertEqual((row['upload_bytes'], row['download_bytes']), (450, 600))
+
+    def test_account_restart_preserves_known_usage_and_marks_gap(self):
+        end = self.at + 16 * 86400
+        p = {'name': 'kiwivm', 'service_id': '123', 'reset_at': end, 'observed_at': self.at, 'used_bytes': 900, 'quota_bytes': 1000}
+        for at, up, down, epoch in [(self.at, 0, 0, 'a'), (self.at + 60, 100, 200, 'a'), (self.at + 120, 30, 40, 'b')]:
+            collector.record_sample(self.db, 'la', at, {'machine': (1, 2, 'boot')}, {**p, 'observed_at': at},
+                                    {'alice': (up, down, epoch)}, '123')
+        row = self.report()['account_usage']['counters'][0]
+        self.assertEqual((row['upload_bytes'], row['download_bytes']), (130, 240))
+        self.assertTrue(row['has_gap'])
+        self.db.close(); self.db = collector.open_state(self.path)
+        collector.record_sample(self.db, 'la', self.at + 180, {'machine': (1, 2, 'boot')}, {**p, 'observed_at': self.at + 180}, {'alice': (40, 50, 'b')}, '123')
+        self.assertEqual(self.report()['account_usage']['counters'][0]['upload_bytes'], 140)
+
+    def test_account_provisioning_keeps_routes_and_attributes_admin_to_admin(self):
+        spec = importlib.util.spec_from_file_location('provision', Path(__file__).resolve().parents[1] / 'metering/provision_accounts.py')
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        runtime = {'inbounds': [], 'outbounds': [{'tag': 'isp-out-dawn'}, {'tag': 'isp-out-zw'}],
+                   'route': {'final': 'block', 'rules': [{'inbound': ['trojan-zw-in'], 'outbound': 'isp-out-zw'}]},
+                   'experimental': {'v2ray_api': {'stats': {'enabled': True, 'outbounds': ['isp-out-dawn', 'isp-out-zw']}}}}
+        for scope in ['dawn', 'zw', 'tx']:
+            for kind, prefix in [('trojan', 'trojan'), ('hysteria2', 'hy2')]:
+                tag = ('tx-' + prefix + '-in') if scope == 'tx' else prefix + '-' + scope + '-in'
+                runtime['inbounds'].append({'tag': tag, 'type': kind, 'listen_port': len(runtime['inbounds']) + 23000,
+                                            'users': [{'name': 'old', 'password': 'old-' + tag}], 'obfs': {'password': 'old-obfs'}})
+        manifest = {'dawn': {'scopes': ['dawn', 'zw', 'tx'], 'trojan': 'a'*40, 'hysteria': 'b'*40},
+                    'zw': {'scopes': ['zw', 'tx'], 'trojan': 'c'*40, 'hysteria': 'd'*40}}
+        result, meter = module.prepare(runtime, {'kiwivm': {'veid': '123'}}, manifest)
+        self.assertEqual(result['route'], runtime['route'])
+        for before, after in zip(runtime['inbounds'], result['inbounds']):
+            self.assertEqual(after['listen_port'], before['listen_port']); self.assertEqual(after['obfs'], before['obfs'])
+            self.assertEqual(after['users'][0]['password'], before['users'][0]['password'])
+            self.assertIn('account-dawn', [u['name'] for u in after['users']])
+            self.assertEqual('account-zw' in [u['name'] for u in after['users']], 'dawn' not in after['tag'])
+        self.assertEqual(meter['account_users']['dawn'], ['account-dawn'])
+        self.assertEqual(len(meter['account_users']['__legacy__']), 6)
+        repeated, _ = module.prepare(result, meter, manifest)
+        self.assertEqual(repeated, result, 'Provisioning is idempotent')
+
 
 if __name__ == '__main__':
     unittest.main()

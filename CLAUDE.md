@@ -62,7 +62,7 @@ Each ISP row produces:
 - `isp-out-<id>`
 - `<UPPERCASE-ID>-TJ` and `<UPPERCASE-ID>-HY2`; internal IDs, credentials and routing stay unchanged.
 
-The portal tracks 100 GB per-account ISP quota by UTC calendar month. With SUB_KIWIVM_VEID configured (current gw deployment), shared usage/quota/reset come exclusively from KiwiVM, never the natural-month NIC ledger. Provider outages retain the last snapshot with its original timestamp; unknown/stale remaining allowance must not appear current. Unconfigured legacy deployments use an internal 1000 GB public-NIC quota. The portal never stops users or changes routing for quota exhaustion, but must not promise that the provider will keep an exhausted VPS running. See `metering/README.md`.
+With SUB_ACCOUNT_CREDENTIALS_FILE configured, the portal meters each account's ISP + direct payload through its distinct authenticated user and uses KiwiVM's billing cycle. Admin traffic always uses the admin's own credentials, including on other ISP lines. Keep subscription URLs and route scope stable; preserve old credentials as explicitly unattributed legacy traffic until a coordinated retirement. Never backfill shared history by guessing. Partial history must not advertise complete remaining allowance. All node subscriptions use the owner's personal total; the webpage shows the supplier's shared quota separately. The 100 GB personal allowance is notify-only. SUB_KIWIVM_VEID supplies authoritative shared usage/quota/reset. Legacy unconfigured deployments retain old UTC-month semantics. The portal never stops users or changes routing for quota exhaustion, but must not promise that the provider will keep an exhausted VPS running. See `metering/README.md`.
 - `/v2?isp=<id>` and `/c?isp=<id>`
 
 ## Performance contract

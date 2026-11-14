@@ -1,4 +1,4 @@
-import { accountUsage, ispUsage, ingestUsage, withUsageHeaders } from './usage.mjs';
+import { accountUsage, ispUsage, ingestUsage, withUsageHeaders, accountMode, billingOverview } from './usage.mjs';
 
 const encoder = new TextEncoder();
 const COOKIE = '__Host-sub-session';
@@ -166,7 +166,7 @@ function secure(response) {
   return new Response(response.body, { status: response.status, headers });
 }
 
-export function createHandler({ catalog, globalSource, handlers }) {
+export function createHandler({ catalog, globalSource, handlers, accountCredentials = {} }) {
   const routes = new Set(['/v2', '/c', '/s', '/global-extension.js', '/tx', '/tx-v2']);
   async function handle(context) {
     const { request, env } = context;
@@ -195,37 +195,47 @@ export function createHandler({ catalog, globalSource, handlers }) {
     const admins = (env.SUB_ADMIN_USERS || '').split(',').map(name => name.trim().toLowerCase()).filter(Boolean);
     const isAdmin = admins.every(name => USERNAME.test(name)) && admins.includes(user.username);
     const allowed = isAdmin ? catalog.map(entry => entry.id) : assigned;
+    const ownCredentials = accountMode(env) ? accountCredentials[user.username] : null;
+    if (accountMode(env) && !ownCredentials) return error('账号节点正在配置，请稍后更新', 503);
     if (path === '/api/me' || path === '/subscriptions.json') {
       const personalToken = await subscriptionToken(user, env.SUB_AUTH_KEY);
-      const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned);
+      const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned, user.username);
+      const overview = isAdmin && accountMode(env) ? await billingOverview(env.SUB_AUTH_DB, env, usage.shared) : undefined;
       const entries = await Promise.all(catalog.filter(entry => allowed.includes(entry.id)).map(async entry => {
         const result = { ...entry };
         for (const key of ['v2', 'clash', 'shadowrocket']) {
           if (result[key]) { const link = new URL(result[key], url.origin); link.searchParams.set('token', personalToken); result[key] = link.pathname + link.search; }
         }
         if (entry.kind !== 'tx-direct') result.extension = '/s?isp=' + encodeURIComponent(entry.id) + '&token=' + encodeURIComponent(personalToken);
-        result.usage = entry.kind === 'tx-direct' ? usage.shared : isAdmin
+        result.usage = entry.kind === 'tx-direct' ? usage.shared : accountMode(env) ? usage.personal : isAdmin
           ? await ispUsage(env.SUB_AUTH_DB, env, entry.id, usage.period) : usage.personal;
         return result;
       }));
-      return json(path === '/api/me' ? { username: user.username, is_admin: isAdmin, entries, usage } : entries);
+      return json(path === '/api/me' ? { username: user.username, is_admin: isAdmin, entries, usage, overview } : entries);
     }
     const requested = url.searchParams.getAll('isp');
     if (requested.length > 1 || requested.some(id => !allowed.includes(id))) return error('没有这条线路的访问权限', 403);
     const direct = path === '/tx' || path === '/tx-v2';
     if (direct && !allowed.includes('tx')) return error('没有这条线路的访问权限', 403);
     const permitted = allowed.filter(id => direct ? id === 'tx' : id !== 'tx');
+    if (ownCredentials && permitted.some(id => !ownCredentials.scopes.includes(id))) return error('账号节点权限正在同步', 503);
+    const nodeCredentials = ownCredentials ? { trojan: ownCredentials.trojan, hysteria: ownCredentials.hysteria } : null;
     if (!permitted.length) return error('没有这条线路的访问权限', 403);
     if (path === '/s' || path === '/global-extension.js') {
       const match = globalSource.match(/const ispEntries = JSON\.parse\(atob\("([A-Za-z0-9+/=]+)"\)\)/);
       if (!match) throw new Error('Invalid global extension template');
-      const entries = JSON.parse(atob(match[1])).filter(entry => permitted.includes(entry.id) && (!requested[0] || entry.id === requested[0]));
+      const entries = JSON.parse(atob(match[1])).filter(entry => permitted.includes(entry.id) && (!requested[0] || entry.id === requested[0]))
+        .map(entry => nodeCredentials ? { ...entry, credentials: { ...entry.credentials, ...nodeCredentials } } : entry);
       if (!entries.length) return error('线路不可用', 410);
       const source = globalSource.replace(match[0], 'const ispEntries = ' + JSON.stringify(entries));
       return new Response(source, { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
     }
-    const response = await handlers[path]({ ...context, data: { ...context.data, allowedIsps: permitted } });
+    const response = await handlers[path]({ ...context, data: { ...context.data, allowedIsps: permitted, accountCredentials: nodeCredentials } });
     const headerOptions = { homepage: url.origin + '/' };
+    if (accountMode(env)) {
+      const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned, user.username);
+      return withUsageHeaders(response, usage.personal, headerOptions);
+    }
     // Scoped admin links use that ISP's 100 GB allowance. The combined
     // subscription uses the already-inclusive shared machine pool, never a sum.
     if (isAdmin && !direct) {
