@@ -86,7 +86,8 @@ try {
           assert.ok(!body.includes(credentials[foreign].trojan)); assert.ok(!body.includes(credentials[foreign].hysteria));
         }
         if (field !== 'extension') {
-          assert.equal(response.headers.get('Subscription-Userinfo'), `upload=${(i+1)*GB}; download=${(i+2)*GB}; total=${100*GB}; expire=0`);
+          assert.equal(response.headers.get('Subscription-Userinfo'), `upload=0; download=${991*GB}; total=${1000*GB}; expire=0`, 'Every account sees the same shared package bar');
+          assert.equal(response.headers.get('X-Subscription-Usage-Source'), 'kiwivm');
           assert.equal(response.headers.get('X-Subscription-Usage-Reset-At'), String(reset));
         }
       }

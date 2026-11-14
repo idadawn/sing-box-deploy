@@ -243,7 +243,9 @@ export function createHandler({ catalog, globalSource, handlers, accountCredenti
     const headerOptions = { homepage: url.origin + '/' };
     if (accountMode(env)) {
       const usage = await accountUsage(env.SUB_AUTH_DB, env, assigned, user.username);
-      return withUsageHeaders(response, usage.personal, headerOptions);
+      // Standard client cards expose one used/total bar. Show the authoritative
+      // shared package here; personal counters remain separate in the portal.
+      return withUsageHeaders(response, usage.shared, headerOptions);
     }
     // Scoped admin links use that ISP's 100 GB allowance. The combined
     // subscription uses the already-inclusive shared machine pool, never a sum.
