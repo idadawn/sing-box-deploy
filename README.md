@@ -2,6 +2,28 @@
 
 在 Debian 或 Ubuntu 上部署和管理 sing-box。每条有效线路提供 Trojan（TCP）和 Hysteria2（UDP）两种接入方式，普通流量经该线路指定的 SOCKS5 出口转发。可以只运行代理，也可以为 Clash/Mihomo、v2rayN/v2rayNG 和 Shadowrocket 生成订阅。
 
+## 通过 AI 助手使用
+
+在 Codex 中打开本仓库即可使用 `$sing-box-deploy`。在其他项目里，把下面这句发给 Codex 即可安装。
+
+```text
+用 $skill-installer 安装 https://github.com/idadawn/sing-box-deploy/tree/main/.agents/skills/sing-box-deploy
+```
+
+也可以在目标项目目录用 npm 的 `npx` 安装。下面的命令安装到当前项目，Claude Code 用户将 `-a codex` 换成 `-a claude-code`。
+
+```bash
+npx skills add idadawn/sing-box-deploy --skill sing-box-deploy -a codex -y
+```
+
+安装后，可以直接给助手以下任一请求。
+
+> 用 $sing-box-deploy 列出我在 Ubuntu 上只装基础代理需要准备什么。先做清单。
+
+> 用 $sing-box-deploy 在我指定的 Debian 服务器上校验已有配置。到校验结束即可。
+
+执行部署时提供自己的目标主机、项目目录和操作范围。域名、线路清单和令牌在自己的私有配置中填写。[Skill 使用说明](.agents/skills/sing-box-deploy/SKILL.md)
+
 ## 开始前需要准备什么
 
 | 用途 | 需要准备 |

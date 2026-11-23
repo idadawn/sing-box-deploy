@@ -19,6 +19,8 @@ for script in install.sh manage.sh migrate.sh setup-ssh.sh sync-clash-rules.sh t
   bash -n "${ROOT_DIR}/${script}"
 done
 
+python3 "${ROOT_DIR}/tests/deploy-skill.py"
+
 (
   source "${ROOT_DIR}/sync-clash-rules.sh"
   ENV_FILE="${TMP_DIR}/retired.env"

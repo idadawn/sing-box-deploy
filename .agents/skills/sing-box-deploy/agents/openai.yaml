@@ -1,0 +1,4 @@
+interface:
+  display_name: "sing-box 部署助手"
+  short_description: "准备 sing-box 部署材料，校验服务器配置并按需发布客户端订阅"
+  default_prompt: "使用 $sing-box-deploy 帮我列出只部署基础代理所需的材料和校验步骤。"
