@@ -122,7 +122,7 @@ trap 'on_error $LINENO' ERR
 usage() {
   cat <<'EOF'
 用法:
-  bash install-singbox.sh [选项]
+  bash install.sh [选项]
 
 选项:
   --env <path>         指定 .env 文件路径
@@ -139,9 +139,9 @@ usage() {
   -h, --help           显示帮助
 
 示例:
-  bash install-singbox.sh
-  bash install-singbox.sh --env /root/sb/.env
-  bash install-singbox.sh --force-reinstall
+  bash install.sh
+  bash install.sh --env ./.env
+  bash install.sh --force-reinstall
 EOF
 }
 

@@ -1,120 +1,27 @@
-# Cloudflare Pages 订阅托管
+# Cloudflare Pages 订阅发布
 
-这个目录将 v2rayN、Clash 订阅和 Clash Verge 全局扩展脚本托管在 Cloudflare Pages 上。相关文件由根目录的 `install.sh` 动态生成并部署，无需手动编辑。
+这个目录包含订阅首页和 Pages 项目的基础文件。根目录的安装脚本根据私有线路清单生成订阅、Functions 和客户端规则。构建后的目录可能包含节点凭据，应当作为私有发布产物处理。
 
-- `Clash`、`v2rayN / v2rayNG` 与 Shadowrocket 节点订阅由私有 ISP 清单动态生成
-- `/v2?isp=<编号>` 与 `/c?isp=<编号>` 只返回该 ISP 的两个 T 入口节点
-- 主页从部署时生成的 `subscriptions.json` 读取独立订阅和到期日；`homepageHiddenIds` 可隐藏私用编号，追加 `?all=1` 可显示全部编号（都不构成访问控制）
-- 启用 `TX_DIRECT_ENABLED` 后，主页节点列表追加“公共直出”，`?isp=tx` 可直接选中；对应 Clash `/tx`、v2ray/Shadowrocket `/tx-v2`，不加入原 ISP 订阅或容灾组。
-- 单 ISP 订阅同时返回 `Profile-Title: <编号>`、`Profile-Update-Interval: 24` 与无引号、无扩展名的 `filename=<编号>`/`filename*`，兼容采用不同响应头命名的客户端
-- 不带 `isp` 参数时返回全部未到期 ISP，过期编号会返回 HTTP 410
-- 私有清单到期时间为 `never` 的 ISP 不因日期被过滤，单独订阅返回 `expire=0`，首页显示“有效期不限”；混合订阅的到期提示取最早的有限日期。
-- AI 服务默认走 ISP-only 专用策略组，不使用 `DIRECT`
-- `/c` 和全局扩展为 PayPal 官网、API、静态资源、PayPal.Me 及中国站设置优先 ISP 规则和代理 DNS，使用 `paypal.com`、`paypalobjects.com`、`paypal.me`、`paypal.cn`、`paypal.com.cn` 域名后缀；独立 `/tx` 不加入 ISP 节点。
-- Hysteria2 默认不声明固定上下行带宽，由客户端和服务端使用自适应拥塞控制
-- 直连 `/c` 订阅的交互策略组使用 Hysteria2 优先的 `fallback`，`大流量直出` 组仍优先 Trojan/TCP；`♻️ 自动选择` 名称仅为兼容已保存选择
-- Apple 策略组默认直连且保留手动代理选项；已保存的历史选择可能需要手动切回 `DIRECT`
-- GitHub、Google、X 核心域名默认拒绝客户端 UDP/443，国外 DNS 经交互故障转移组访问 DoH
-- `/c` 与 `/tx` 默认将 DNS 查询经 `🛡️ 自动容灾` 发往 Cloudflare/Google DoH；仅 `geosite:cn,private` 使用国内直连 DoH。禁用并发 `fallback`，避免未知海外域名同时发给国内解析器；节点域名解析仍使用独立的 `proxy-server-nameserver`。更新订阅并重新加载配置后生效，已有客户端 DNS 覆盖需要单独检查。
-- Hugging Face、OneDrive、视频和软件包下载优先使用只含 T 节点的 `📦 大流量直出` 组
-- 默认视频清单包含 YouTube、Twitch、Vimeo、Dailymotion、`rou.video` 及其已确认的 `rn221.xyz` / `rn227.xyz` / `rn248.xyz` 资源域名
-- 启用 `DIRECT_BULK_APPS=telegram` 后，Telegram CIDR 规则也会进入 `📦 大流量直出`，服务端显式使用 T 公网出口
-- 服务端每天同步并校验 Loyalsoldier `release` 快照，客户端每 24 小时从本站镜像更新
-- `/sr` 提供不含凭据的 Shadowrocket Telegram 高优先级模块，引用每日同步的 blackmatrix7 专用规则镜像
+## 发布前准备
 
-## 订阅链接
+| 配置 | 作用 |
+| --- | --- |
+| `CF_ACCOUNT_ID`、`CF_PAGES_PROJECT` | 指定自己的 Cloudflare 账户和目标 Pages 项目。 |
+| `SUB_DOMAIN` | 客户端使用的订阅域名。在 Pages 项目中绑定自定义域名，等待 HTTPS 可用。 |
+| `CF_API_TOKEN` | 用于发布 Pages 的令牌。基础代理证书另用 `CF_DNS_EDIT_TOKEN`。 |
+| 发布工具 | 只更新 Pages 时，发布机需已有 `curl`、`flock`、`git`、`jq`、`node` 和 `wrangler`，以及通过校验的基础配置和线路清单。 |
 
-部署完成后，订阅链接为：
+在仓库根目录运行 `sudo bash install.sh --pages-only` 可生成、发布并验证订阅。启用鉴权的项目要先完成 [D1、密钥及验证账号配置](../subscription-auth/README.md)。规则同步脚本先验证整批快照，成功后才替换已发布的版本。
 
-- **v2rayN**: `https://<SUB_DOMAIN>/v2`
-- **Clash**: `https://<SUB_DOMAIN>/c`
-- **Clash Verge 全局扩展脚本**: `https://<SUB_DOMAIN>/s`
-- **Shadowrocket Telegram 模块**: `https://<SUB_DOMAIN>/sr`
+## 客户端如何导入
 
-其中 `SUB_DOMAIN` 在根目录 `.env` 中配置。
+| 客户端 | 操作 |
+| --- | --- |
+| Clash/Mihomo | 在门户选择线路，复制 Clash 订阅，在客户端配置页添加远程订阅、更新并启用。 |
+| v2rayN / v2rayNG | 复制对应格式的订阅，在订阅管理中添加并更新，再选择该线路的节点。 |
+| Shadowrocket | 将节点订阅以 Subscribe 类型导入。需要 Telegram 专用分流时，把单独的规则模块添加到“配置 → 模块”。 |
+| Clash Verge 全局扩展 | 从授权范围内取得扩展脚本，在全局扩展设置中保存，再更新所用配置。 |
 
-> `/v2`、`/c` 和 `/s` 包含节点凭据。随机路径或首页隐藏不能替代鉴权，订阅地址应按敏感信息管理。
-> `/sr` 只包含 Telegram 分流规则，不包含节点凭据。
+`Profile-Title` 用于客户端命名，`Profile-Update-Interval` 提示更新周期。有限期线路按日期筛选，`never` 表示长期有效。登录模式下，客户端链接可以独立撤销。公开模式下，知道订阅链接的人可以取得节点配置，即使首页隐藏了线路。
 
-## 目录结构
-
-```
-cloudflare-pages-sub/
-├── functions/           # Cloudflare Pages Functions（由 install.sh 生成）
-│   ├── v2.js            # v2rayN 订阅接口 (/v2)
-│   ├── c.js             # Clash 订阅接口 (/c)
-│   └── sr.js            # Shadowrocket Telegram 模块 (/sr)
-├── _redirects           # 重定向规则（由 install.sh 生成）
-├── global-extension.js  # 任意机场的全局扩展脚本（由 install.sh 生成）
-├── subscriptions.json   # 主页公开订阅清单（由 install.sh 生成，不含凭据）
-├── rules/               # Loyalsoldier 规则快照（由定时服务生成）
-├── index.html           # 订阅入口页面
-├── package.json         # 项目配置
-├── wrangler.toml        # Wrangler 配置
-└── README.md            # 本文档
-```
-
-## 自动部署（推荐）
-
-运行根目录的 `install.sh` 会自动生成并部署：
-
-```bash
-sudo ./install.sh
-```
-
-前提条件：`.env` 中配置好 `CF_API_TOKEN`、`CF_ACCOUNT_ID` 和 `SUB_DOMAIN`。
-
-安装脚本还会启用 `clash-rules-sync.timer`。它每天在北京时间 07:15 后检查上游，只有全部规则文件校验通过才替换旧快照并重新部署 Pages；失败时继续保留上一版。
-
-## 手动部署
-
-如需手动更新订阅配置：
-
-```bash
-cd cloudflare-pages-sub
-export CLOUDFLARE_API_TOKEN="你的Token"
-export CLOUDFLARE_ACCOUNT_ID="你的AccountID"
-wrangler pages deploy . --project-name="${CF_PAGES_PROJECT:-sub-converter}" --branch=main
-```
-
-## 绑定自定义域名
-
-1. 在 Pages 项目设置中点击 **Custom domains**
-2. 添加你的 `SUB_DOMAIN`
-3. Cloudflare DNS 中会自动添加 CNAME 记录
-4. 等待 SSL 证书自动签发
-
-## 客户端导入
-
-### v2rayN
-
-1. 订阅 → 订阅设置 → 添加
-2. URL 填写 `https://<SUB_DOMAIN>/v2`
-3. 更新订阅
-
-### Shadowrocket
-
-1. 以 `Subscribe` 类型添加 `https://<SUB_DOMAIN>/v2?isp=<编号>`
-2. 选择导入的 T 节点
-3. 在“配置 → 模块”添加并启用 `https://<SUB_DOMAIN>/sr`
-4. 使用配置路由模式，重启 Telegram 后测试
-
-### Clash Verge / Mihomo
-
-1. 配置 → 新建
-2. 订阅 URL 填写 `https://<SUB_DOMAIN>/c`
-3. 下载并启用
-4. 使用带 `isp=<编号>` 的独立链接时，所有 ISP 流量都固定到该编号；大流量规则仍可使用 `📦 大流量直出`
-5. `🚀 节点选择` 默认使用 `🛡️ 自动容灾`；仅在确认 UDP 链路稳定时再手动选择 Hysteria2
-
-### Clash Verge + 第三方机场
-
-1. 打开 `https://<SUB_DOMAIN>/s`
-2. 将完整内容粘贴到 Clash Verge 的“全局扩展脚本”
-3. 保存并更新任意机场配置
-
-脚本将机场节点用于 `🛫 机场中转`，最终网站出口固定为 T 后端的 ISP，或显式允许的 T 公网直出。
-
-## 可选登录入口
-
-设置 `SUB_AUTH_ENABLED=true` 后，构建流程会替换公开首页，并通过 Pages middleware / D1 限制账号可见的 ISP。`/v2`、`/c`、`/s`、独立直出及清单都要求会话或适用的个人令牌；公开全局脚本和静态节点文件会从资产中移除。默认不启用，现有链接保持原样。上线前必须配置数据库、Secret、账号及验证令牌，并处理历史公开部署，见 [完整说明](../subscription-auth/README.md)。
+停用旧订阅站的流程见[订阅鉴权](../subscription-auth/README.md)。客户端下载过的凭据需要在代理端单独轮换。
