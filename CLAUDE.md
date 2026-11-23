@@ -6,7 +6,7 @@ This file describes the current repository contract for coding agents.
 
 Deploy one Debian/Ubuntu sing-box ingress server with deterministic ISP SOCKS5 egress. Every unexpired TSV entry receives one Trojan/TCP inbound, one Hysteria2/UDP inbound, and independent v2rayN/Clash subscriptions.
 
-The retired J server is out of scope. Never add, contact, or deploy to J.
+Keep retired infrastructure outside the scope of deployment and migration work.
 
 ## Safety invariants
 
@@ -22,7 +22,7 @@ The retired J server is out of scope. Never add, contact, or deploy to J.
 - TSV expiry accepts a valid `YYYY-MM-DD` or `never`. Non-expiring entries stay active in every output and monitor; all-non-expiring subscriptions advertise `expire=0`, while mixed subscriptions retain the earliest finite expiry.
 - Homepage hiding is presentation only, not authorization.
 - Homepage usage contains only the signed-in account's total plus shared provider usage/quota/remaining. Other accounts' details belong to the separate `/#admin` view and session-only `/api/admin/usage` endpoint. Enforce `SUB_ADMIN_USERS` on the server; subscription tokens cannot access the management API. Never load the account overview as part of `/api/me`.
-- `SUB_LEGACY_RETIRED=true` closes only the legacy Pages project. Persist `.subscriptions-retired`, strip credential-bearing assets, keep safe rules, and never regenerate public subscriptions after retirement. Do not retire the authenticated gw project or stop proxy services as part of link retirement.
+- `SUB_LEGACY_RETIRED=true` closes only the retired Pages project. Persist `.subscriptions-retired`, remove credential-bearing assets and preserve safe rule files. Keep authenticated projects and proxy services running.
 - Optional `SUB_AUTH_ENABLED` adds D1-backed accounts, server-side ISP scoping and revocable subscription tokens. It defaults off; do not enable it or invalidate existing links without a requested cutover. Never roll an authenticated deployment back to public assets. Private auth modules must stay under `functions/`, never static assets.
 - Account login controls configuration access, not already-downloaded proxy credentials. Shared inbound passwords and historical unauthenticated Pages deployments require a separate coordinated cutover.
 
@@ -37,12 +37,12 @@ sudo ./install.sh --no-start
 ./install.sh --validate-only
 sudo ./manage.sh
 
-sing-box check -c /etc/sing-box/config.json
+sing-box check -c "$CONFIG_FILE"
 systemctl status sing-box
 journalctl -u sing-box -f
 
 ./migrate.sh export
-./migrate.sh import /path/to/migration-*.tar.gz.enc
+./migrate.sh import "$ENCRYPTED_BUNDLE"
 ```
 
 ## Architecture
@@ -52,7 +52,7 @@ v2rayN / v2rayNG / Clash / Mihomo
              |
        Trojan or Hysteria2
              |
-       T sing-box ingress
+       sing-box ingress
              |
    matching ISP SOCKS5 egress
 ```
@@ -63,7 +63,7 @@ Each ISP row produces:
 - `isp-out-<id>`
 - `<UPPERCASE-ID>-TJ` and `<UPPERCASE-ID>-HY2`; internal IDs, credentials and routing stay unchanged.
 
-With SUB_ACCOUNT_CREDENTIALS_FILE configured, the portal meters each account's ISP + direct payload through its distinct authenticated user and uses KiwiVM's billing cycle. Admin traffic always uses the admin's own credentials, including on other ISP lines. Keep subscription URLs and route scope stable; preserve old credentials as explicitly unattributed legacy traffic until a coordinated retirement. Never backfill shared history by guessing. Partial history must not advertise complete remaining allowance. All node subscriptions show the supplier's shared used/total package in standard client traffic bars. Personal counters remain independent and visible in the portal/admin API; never add personal bytes to provider usage. The 100 GB personal allowance is notify-only. SUB_KIWIVM_VEID supplies authoritative shared usage/quota/reset. Legacy unconfigured deployments retain old UTC-month semantics. The portal never stops users or changes routing for quota exhaustion, but must not promise that the provider will keep an exhausted VPS running. See `metering/README.md`.
+With `SUB_ACCOUNT_CREDENTIALS_FILE` configured, attribute both ISP and direct payload to each authenticated account, including administrators using additional lines. Preserve existing scopes, links and legacy traffic attribution. Label partial history and keep personal usage separate from provider totals. With provider accounting enabled, client traffic bars show the shared provider package. Account thresholds trigger notifications. Preserve UTC-month semantics for installations without provider accounting. See [metering](metering/README.md).
 - `/v2?isp=<id>` and `/c?isp=<id>`
 
 ## Performance contract
@@ -86,7 +86,7 @@ With SUB_ACCOUNT_CREDENTIALS_FILE configured, the portal meters each account's I
 | --- | --- |
 | `install.sh` | Safe env parsing, validation, sing-box JSON generation, network/UFW/systemd setup, Pages asset generation and deployment |
 | `manage.sh` | Status, logs, egress checks, backups, encrypted migration export, uninstall |
-| `migrate-gw.py` / `migration/` | Parallel isolated GW deployment, verified per-line cutover and rollback; never stop/restart source |
+| `migrate-gw.py` / `migration/` | Parallel deployment, verified per-line cutover and rollback while the source continues serving |
 | `migrate.sh` | AES-256-CBC/PBKDF2 export and validated import of `.env` plus ISP TSV |
 | `.env.example` | Non-secret configuration reference |
 | `isp-list.example.tsv` | Field-only private inventory example |
@@ -111,14 +111,14 @@ The Shadowrocket node subscription remains `/v2?isp=<id>`; `/sr` is an additiona
 Before deployment:
 
 ```bash
-bash -n install.sh manage.sh migrate.sh sync-clash-rules.sh
+bash tests/run.sh
 git diff --check
 ```
 
 On the server, additionally validate:
 
 ```bash
-sing-box check -c /etc/sing-box/config.json
+sing-box check -c "$CONFIG_FILE"
 systemctl is-active sing-box
 sysctl net.core.rmem_max net.core.wmem_max
 sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_fastopen
@@ -126,12 +126,12 @@ sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_fasto
 
 Test both TCP and UDP ingress, every active ISP SOCKS5 exit, subscription response headers, YAML parsing, and the fixed-ingress-to-fixed-egress invariant.
 
-## GW migration invariants
+## Parallel migration invariants
 
-- Use `migrate-gw.py` for the current isolated GW service. The old env-only migration is not sufficient.
+- Use `migrate-gw.py` for a parallel gateway migration. Use `migrate.sh` for encrypted configuration export and import.
 - Never stop/restart source proxy services, change credentials/ports/routes, edit live client profiles or change DNS as part of parallel preparation/cutover.
-- Preserve the Cloudflare auth database/signing keys and subscription URLs. Retired dl stays retired.
-- Target must be a distinct host with the same CPU architecture, no existing GW paths/units/ports, and a fresh unique meter source. Never clone the SQLite ledger to a concurrent collector.
+- Preserve the authentication database, signing keys and subscription URLs. Keep previously retired subscription sites closed.
+- Use a distinct target with the same CPU architecture, available service paths and ports, and a fresh meter source. Give each concurrent collector its own SQLite ledger.
 - Aggregate registered meter sources; keep old source IDs for historical totals even on rollback. Mark an old source inactive only after final reporting and intentional decommission; no automatic decommission.
 - Require fresh real TCP/HY2 egress checks before cutover, verify existing scoped subscription URLs after publication, and use compare-and-swap env updates. Publication errors retain a private recovery journal.
 - Certificate files are initially copied without DNS credentials. Keep renewal on the old host during the overlap, use sync-certs, and arrange independent target renewal before decommission.

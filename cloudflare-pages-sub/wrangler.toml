@@ -8,5 +8,5 @@ pages_build_output_dir = "."
 
 # 自定义域名（部署后在 Cloudflare Dashboard > Pages > Custom domains 中配置）
 # routes = [
-#   { pattern = "sub.yourdomain.com", custom_domain = true }
+#   { pattern = "subscriptions.example.com", custom_domain = true }
 # ]
